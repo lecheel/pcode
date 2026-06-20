@@ -13,7 +13,7 @@ mod tools;
 use config::AppConfig;
 
 fn print_help() {
-    eprintln!("prepl — vim-modal patch REPL\n");
+    eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
     eprintln!("  pl                Start REPL with default config");
     eprintln!("  pl <config.toml>  Start REPL with custom config");

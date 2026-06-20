@@ -226,28 +226,28 @@ impl Default for ReplConfig {
     }
 }
 
-fn prepl_dir() -> std::path::PathBuf {
+fn pcode_dir() -> std::path::PathBuf {
     dirs::config_dir()
         .expect("Cannot determine config directory")
-        .join("prepl")
+        .join("pcode")
 }
 
-fn ensure_prepl_dirs() {
-    let dir = prepl_dir();
+fn ensure_pcode_dirs() {
+    let dir = pcode_dir();
     let _ = std::fs::create_dir_all(dir.join("sessions"));
 }
 
 fn default_history_file() -> String {
-    ensure_prepl_dirs();
-    prepl_dir()
+    ensure_pcode_dirs();
+    pcode_dir()
         .join("history.txt")
         .to_string_lossy()
         .to_string()
 }
 
 fn default_sessions_dir() -> String {
-    ensure_prepl_dirs();
-    prepl_dir().join("sessions").to_string_lossy().to_string()
+    ensure_pcode_dirs();
+    pcode_dir().join("sessions").to_string_lossy().to_string()
 }
 
 fn default_max_rounds() -> u32 {
@@ -265,7 +265,7 @@ pub fn load_config(path: Option<&Path>) -> Result<AppConfig> {
             toml::from_str(&content).with_context(|| format!("Parse config: {}", p.display()))?;
         return Ok(cfg);
     }
-    let default_path = prepl_dir().join("config.toml");
+    let default_path = pcode_dir().join("config.toml");
     if default_path.exists() {
         let content = std::fs::read_to_string(&default_path)
             .with_context(|| format!("Read config: {}", default_path.display()))?;

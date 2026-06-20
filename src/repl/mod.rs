@@ -280,7 +280,7 @@ impl Repl {
         self.event_loop(&mut stdout).await
     }
     fn push_welcome(&mut self) {
-        self.push_llm_line("prepl — vim-modal patch REPL", LineStyle::Info);
+        self.push_llm_line("pcode — vim-modal patch REPL", LineStyle::Info);
         let idx = self.llm_buffer_idx();
         self.buffers[idx].push_blank();
         self.push_llm_line(
@@ -1693,7 +1693,7 @@ impl Repl {
         Ok(CommandResult::Continue)
     }
     fn push_help(&mut self) {
-        self.push_command_info("  prepl — Vim-Modal Commands", LineStyle::Info);
+        self.push_command_info("  pcode — Vim-Modal Commands", LineStyle::Info);
         self.buffer_mut().push_blank();
         let cmds: &[(&str, &str)] = &[
             (":q / :quit", "Exit the REPL"),

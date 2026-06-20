@@ -1,5 +1,5 @@
 [package]
-name = "prepl"
+name = "pcode"
 version = "0.3.0"
 edition = "2021"
 description = "Interactive REPL client with sessions for Ollama/llama.cpp code-patch tool calling"
