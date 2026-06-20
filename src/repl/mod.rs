@@ -77,6 +77,7 @@ pub struct Repl {
     search_query: Option<String>,
     search_matches: Vec<usize>,
     search_match_idx: Option<usize>,
+    stash_pop_target: Option<String>,
 }
 const INPUT_AREA_ROWS: usize = 2;
 impl Repl {
@@ -113,6 +114,7 @@ impl Repl {
             search_query: None,
             search_matches: Vec::new(),
             search_match_idx: None,
+            stash_pop_target: None,
         }
     }
     fn buffer(&self) -> &ResponseBuffer {
@@ -631,7 +633,39 @@ impl Repl {
         self.render(stdout)
     }
     fn handle_normal_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        if self.buffer().name() == "Git Status" {
+        if let Some(target) = self.stash_pop_target.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let out = std::process::Command::new("git")
+                        .arg("stash")
+                        .arg("pop")
+                        .arg(&target)
+                        .output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        if !msg.trim().is_empty() {
+                            self.push_command_info(format!("  📦 {}", msg.trim()), LineStyle::Info);
+                        }
+                        if !err.trim().is_empty() {
+                            self.push_command_info(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            );
+                        }
+                    }
+                    self.show_git_status(stdout, None)?;
+                }
+                _ => {
+                    self.push_line("  Cancelled stash pop.", LineStyle::Dim);
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if self.buffer().name() == "GitStatus" {
             match key.code {
                 KeyCode::Char('q') => {
                     self.close_buffer();
@@ -708,12 +742,30 @@ impl Repl {
                 }
                 KeyCode::Enter => {
                     let cursor_line = self.buffer().cursor_line();
+                    let mut stash_ref_opt = None;
+                    let mut file_to_open = None;
                     if let Some(line) = self.buffer().lines().get(cursor_line) {
-                        if line.content.starts_with("    ") {
-                            let file = line.content.trim().to_string();
-                            self.load_file_to_buffer(&file, stdout)?;
-                            return Ok(());
+                        if line.content.contains("stash@{") {
+                            if let Some(start) = line.content.find("stash@{") {
+                                if let Some(end) = line.content[start..].find("}") {
+                                    let stash_ref = &line.content[start..start + end + 1];
+                                    stash_ref_opt = Some(stash_ref.to_string());
+                                }
+                            }
+                        } else if line.content.starts_with("    ") {
+                            file_to_open = Some(line.content.trim().to_string());
                         }
+                    }
+
+                    if let Some(stash_ref) = stash_ref_opt {
+                        self.stash_pop_target = Some(stash_ref.clone());
+                        self.push_line(format!("  Pop {}? [n/Y]", stash_ref), LineStyle::Info);
+                        self.scroll_to_bottom();
+                        self.render(stdout)?;
+                        return Ok(());
+                    } else if let Some(file) = file_to_open {
+                        self.load_file_to_buffer(&file, stdout)?;
+                        return Ok(());
                     }
                 }
                 _ => {}
@@ -2208,17 +2260,17 @@ impl Repl {
             .arg("--porcelain=v1")
             .output();
 
-        let new_buf_idx = if self.buffer().name() == "Git Status" {
+        let new_buf_idx = if self.buffer().name() == "GitStatus" {
             self.active_buffer
         } else {
             let idx = self.buffers.len();
-            self.buffers.push(ResponseBuffer::with_name("Git Status"));
+            self.buffers.push(ResponseBuffer::with_name("GitStatus"));
             idx
         };
         self.active_buffer = new_buf_idx;
         self.buffers[new_buf_idx].clear();
         let c_idx = self.console_buffer_idx();
-        self.buffers[c_idx].push(BufferLine::new("  📊 Git Status", LineStyle::Info));
+        self.buffers[c_idx].push(BufferLine::new("  📊 GitStatus", LineStyle::Info));
 
         let mut staged = Vec::new();
         let mut unstaged = Vec::new();
@@ -2256,7 +2308,7 @@ impl Repl {
             self.push_line("    (none)", LineStyle::Dim);
         } else {
             for f in &staged {
-                self.push_line(format!("    {}", f), LineStyle::Plain);
+                self.push_line(format!("    {}", f), LineStyle::ToolResult);
             }
         }
         self.push_line("", LineStyle::Plain);
@@ -2270,7 +2322,7 @@ impl Repl {
             self.push_line("    (none)", LineStyle::Dim);
         } else {
             for f in &unstaged {
-                self.push_line(format!("    {}", f), LineStyle::Plain);
+                self.push_line(format!("    {}", f), LineStyle::Error);
             }
         }
         self.push_line("", LineStyle::Plain);
@@ -2284,7 +2336,7 @@ impl Repl {
             self.push_line("    (none)", LineStyle::Dim);
         } else {
             for f in &untracked {
-                self.push_line(format!("    {}", f), LineStyle::Plain);
+                self.push_line(format!("    {}", f), LineStyle::Dim);
             }
         }
         self.push_line("", LineStyle::Plain);
@@ -2307,7 +2359,7 @@ impl Repl {
         if branch.is_empty() {
             self.push_line("    (detached HEAD)", LineStyle::Dim);
         } else {
-            self.push_line(format!("    * {} {}", branch, time), LineStyle::Plain);
+            self.push_line(format!("    * {} {}", branch, time), LineStyle::ToolResult);
         }
         self.push_line("", LineStyle::Plain);
 
