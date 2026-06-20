@@ -18,6 +18,7 @@ fn print_help() {
     eprintln!("  pl                Start REPL with default config");
     eprintln!("  pl <config.toml>  Start REPL with custom config");
     eprintln!("  pl <todo.md>      Start REPL and auto-submit todo task");
+    eprintln!("  pl -q             Quick switch via mswitch binary");
     eprintln!("  pl --help         Show this help message");
 }
 
@@ -27,6 +28,22 @@ async fn main() -> Result<()> {
     let mut initial_prompt = None;
     if let Some(arg) = std::env::args().nth(1) {
         match arg.as_str() {
+            "-q" | "--quickswitch" => {
+                let extra_args: Vec<String> = std::env::args().skip(2).collect();
+                let mut cmd = std::process::Command::new("mswitch");
+                for a in extra_args {
+                    cmd.arg(a);
+                }
+                match cmd.status() {
+                    Ok(status) => {
+                        if !status.success() {
+                            eprintln!("mswitch exited with code: {:?}", status.code());
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to run mswitch: {}", e),
+                }
+                std::process::exit(0);
+            }
             "--help" | "-h" | "help" => {
                 print_help();
                 std::process::exit(0);
