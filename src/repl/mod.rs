@@ -668,6 +668,35 @@ impl Repl {
             }
             return Ok(());
         }
+        // Generic Enter handler for file:line:content format (e.g. rg/grep results)
+        if key.code == KeyCode::Enter && self.buffer().name() != "GitStatus" {
+            let cursor_line = self.buffer().cursor_line();
+            if let Some(line) = self.buffer().lines().get(cursor_line) {
+                let content = line.content();
+                if let Some(colon1) = content.find(':') {
+                    if let Some(colon2) = content[colon1 + 1..].find(':') {
+                        let file = content[..colon1].to_string();
+                        let line_num_str = &content[colon1 + 1..colon1 + 1 + colon2];
+                        if let Ok(line_num) = line_num_str.parse::<usize>() {
+                            // Only attempt to open if it looks like a valid file path
+                            if !file.is_empty() && !file.contains(' ') {
+                                self.load_file_to_buffer(&file, stdout)?;
+                                let target_line = line_num.saturating_sub(1);
+                                if target_line < self.buffer().len() {
+                                    self.buffer_mut().set_cursor(target_line, 0);
+                                    let h = self.response_area_height();
+                                    let w = self.content_width();
+                                    self.buffer_mut().ensure_cursor_visible(h, w);
+                                }
+                                self.render(stdout)?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if self.buffer().name() == "GitStatus" {
             match key.code {
                 KeyCode::Char('q') => {
@@ -1344,14 +1373,19 @@ impl Repl {
                     };
                     let path_str = if arg.is_empty() {
                         let name = self.buffer().name().to_string();
-                        if name.is_empty() || name == "Chat" {
+                        let name = if name == "rg" {
+                            "rg_results.txt".to_string()
+                        } else if name.is_empty() || name == "Chat" {
                             "chat.md".to_string()
                         } else {
                             name
-                        }
+                        };
+                        let name = name.replace('*', "");
+                        name
                     } else {
                         arg.to_string()
                     };
+
                     if path_str.is_empty() {
                         self.push_command_info(
                             "  ❌ Specify a file path: :write <path>",
@@ -1710,8 +1744,8 @@ impl Repl {
                     let output = std::process::Command::new("rg")
                         .arg("--color")
                         .arg("never")
-                        .arg("--heading")
                         .arg("-n")
+                        .arg("-H")
                         .arg(arg)
                         .arg(".")
                         .output()
@@ -1728,12 +1762,16 @@ impl Repl {
                             let stdout_str = String::from_utf8_lossy(&out.stdout);
                             let lines: Vec<&str> = stdout_str.lines().collect();
 
-                            let new_buf_idx = self.buffers.len();
-                            self.buffers
-                                .push(ResponseBuffer::with_name(format!("rg: {}", arg)));
+                            let new_buf_idx = if self.buffer().name() == "rg" {
+                                self.active_buffer
+                            } else {
+                                let idx = self.buffers.len();
+                                self.buffers.push(ResponseBuffer::with_name("rg"));
+                                idx
+                            };
                             self.active_buffer = new_buf_idx;
+                            self.buffers[new_buf_idx].clear();
 
-                            // Log to console without switching view
                             let c_idx = self.console_buffer_idx();
                             self.buffers[c_idx].push(BufferLine::new(
                                 format!("  🔍 rg: {}", arg),
