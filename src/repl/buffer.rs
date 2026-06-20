@@ -1,6 +1,7 @@
 use crossterm::style::Color;
 use unicode_width::UnicodeWidthChar;
-#[derive(Debug, Clone)]
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LineStyle {
     User,
     Assistant,
@@ -12,43 +13,77 @@ pub enum LineStyle {
     Plain,
     Separator,
 }
+
+impl LineStyle {
+    pub fn fg_color(&self) -> Color {
+        match self {
+            LineStyle::User => Color::Magenta,
+            LineStyle::Assistant => Color::White,
+            LineStyle::Tool => Color::Cyan,
+            LineStyle::ToolResult => Color::Green,
+            LineStyle::Info => Color::Blue,
+            LineStyle::Error => Color::Red,
+            LineStyle::Dim => Color::DarkGrey,
+            LineStyle::Plain => Color::White,
+            LineStyle::Separator => Color::DarkGrey,
+        }
+    }
+
+    pub fn is_bold(&self) -> bool {
+        matches!(
+            self,
+            LineStyle::User
+                | LineStyle::Tool
+                | LineStyle::ToolResult
+                | LineStyle::Error
+                | LineStyle::Info
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BufferLine {
-    pub content: String,
-    pub style: LineStyle,
+    pub segments: Vec<(String, LineStyle)>,
 }
+
 impl BufferLine {
     pub fn new(content: impl Into<String>, style: LineStyle) -> Self {
         Self {
-            content: content.into(),
-            style,
+            segments: vec![(content.into(), style)],
         }
     }
+
+    pub fn from_segments(segments: Vec<(String, LineStyle)>) -> Self {
+        Self { segments }
+    }
+
     pub fn fg_color(&self) -> Color {
-        match &self.style {
-            LineStyle::User => Color::Green,
-            LineStyle::Assistant => Color::White,
-            LineStyle::Tool => Color::Yellow,
-            LineStyle::ToolResult => Color::Cyan,
-            LineStyle::Info => Color::Magenta,
-            LineStyle::Error => Color::Red,
-            LineStyle::Dim => Color::DarkGrey,
-            LineStyle::Plain => Color::Grey,
-            LineStyle::Separator => Color::DarkCyan,
-        }
+        self.segments
+            .first()
+            .map(|s| s.1.fg_color())
+            .unwrap_or(Color::White)
     }
+
     pub fn is_bold(&self) -> bool {
-        matches!(
-            self.style,
-            LineStyle::User | LineStyle::Error | LineStyle::Assistant
-        )
+        self.segments
+            .first()
+            .map(|s| s.1.is_bold())
+            .unwrap_or(false)
+    }
+
+    pub fn content(&self) -> String {
+        self.segments
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .collect::<String>()
     }
 }
 pub struct VisualRow {
     pub logical_line: usize,
+    pub content: String,
+    pub segments: Vec<(String, LineStyle)>,
     pub start_col: usize,
     pub end_col: usize,
-    pub content: String,
     pub fg_color: Color,
     pub is_bold: bool,
 }
@@ -128,58 +163,48 @@ impl ResponseBuffer {
     }
     pub fn visual_rows(&self, width: usize) -> Vec<VisualRow> {
         let mut rows = Vec::new();
-        if width == 0 {
-            return rows;
-        }
         for (line_idx, line) in self.lines.iter().enumerate() {
-            let chars: Vec<char> = line.content.chars().collect();
-            if chars.is_empty() {
-                rows.push(VisualRow {
-                    logical_line: line_idx,
-                    start_col: 0,
-                    end_col: 0,
-                    content: String::new(),
-                    fg_color: line.fg_color(),
-                    is_bold: line.is_bold(),
-                });
-                continue;
+            // Flatten segments into characters with their styles
+            let mut chars: Vec<(char, LineStyle)> = Vec::new();
+            for (text, style) in &line.segments {
+                for ch in text.chars() {
+                    chars.push((ch, *style));
+                }
             }
-            let mut col = 0usize;
+
+            let mut col = 0;
             while col < chars.len() {
-                let mut current_width = 0;
-                let mut end = col;
-                let mut last_space = None;
-                while end < chars.len() {
-                    let ch = chars[end];
-                    let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-                    if current_width + ch_w > width && end > col {
-                        break;
-                    }
-                    current_width += ch_w;
-                    if ch.is_whitespace() {
-                        last_space = Some(end + 1);
-                    }
-                    end += 1;
-                }
-                if end == chars.len() || current_width <= width {
-                } else {
-                    if let Some(space) = last_space {
-                        if space > col {
-                            end = space;
+                let end = (col + width).min(chars.len());
+
+                // Reconstruct segments for this visual row
+                let mut segments = Vec::new();
+                let mut current_text = String::new();
+                let mut current_style = chars[col].1;
+
+                for (ch, style) in &chars[col..end] {
+                    if *style != current_style {
+                        if !current_text.is_empty() {
+                            segments.push((current_text.clone(), current_style));
+                            current_text.clear();
                         }
+                        current_style = *style;
                     }
+                    current_text.push(*ch);
                 }
-                if end == col {
-                    end += 1;
+                if !current_text.is_empty() {
+                    segments.push((current_text.clone(), current_style));
                 }
-                let content: String = chars[col..end].iter().collect();
+
+                let content: String = segments.iter().map(|(s, _)| s.as_str()).collect();
+
                 rows.push(VisualRow {
                     logical_line: line_idx,
+                    content,
+                    segments,
                     start_col: col,
                     end_col: end,
-                    content,
-                    fg_color: line.fg_color(),
-                    is_bold: line.is_bold(),
+                    fg_color: chars[col].1.fg_color(),
+                    is_bold: chars[col].1.is_bold(),
                 });
                 col = end;
             }
@@ -226,7 +251,7 @@ impl ResponseBuffer {
         } else if self.cursor_line > 0 {
             self.cursor_line -= 1;
             if let Some(line) = self.lines.get(self.cursor_line) {
-                self.cursor_col = line.content.chars().count().saturating_sub(1);
+                self.cursor_col = line.content().chars().count().saturating_sub(1);
             } else {
                 self.cursor_col = 0;
             }
@@ -237,7 +262,7 @@ impl ResponseBuffer {
             return;
         }
         if let Some(line) = self.lines.get(self.cursor_line) {
-            let max = line.content.chars().count().saturating_sub(1);
+            let max = line.content().chars().count().saturating_sub(1);
             if self.cursor_col < max {
                 self.cursor_col += 1;
             } else if self.cursor_line < self.lines.len() - 1 {
@@ -249,7 +274,7 @@ impl ResponseBuffer {
     pub fn set_cursor(&mut self, line: usize, col: usize) {
         if line < self.lines.len() {
             self.cursor_line = line;
-            let max = self.lines[line].content.chars().count().saturating_sub(1);
+            let max = self.lines[line].content().chars().count().saturating_sub(1);
             self.cursor_col = col.min(max);
         } else if self.lines.is_empty() {
             self.cursor_line = 0;
@@ -351,7 +376,7 @@ impl ResponseBuffer {
     }
     fn clamp_cursor_col(&mut self) {
         if let Some(line) = self.lines.get(self.cursor_line) {
-            let max_col = line.content.chars().count().saturating_sub(1);
+            let max_col = line.content().chars().count().saturating_sub(1);
             self.cursor_col = self.cursor_col.min(max_col);
         } else {
             self.cursor_col = 0;

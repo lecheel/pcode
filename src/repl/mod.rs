@@ -714,8 +714,10 @@ impl Repl {
                 KeyCode::Char('s') => {
                     let cursor_line = self.buffer().cursor_line();
                     if let Some(line) = self.buffer().lines().get(cursor_line) {
-                        if line.content.starts_with("    ") {
-                            let file = line.content.trim().to_string();
+                        let content = line.content();
+                        if content.starts_with("    ") {
+                            let file = content.trim().to_string();
+
                             let status_out = std::process::Command::new("git")
                                 .arg("status")
                                 .arg("--porcelain")
@@ -751,18 +753,18 @@ impl Repl {
                     let mut stash_ref_opt = None;
                     let mut file_to_open = None;
                     if let Some(line) = self.buffer().lines().get(cursor_line) {
-                        if line.content.contains("stash@{") {
-                            if let Some(start) = line.content.find("stash@{") {
-                                if let Some(end) = line.content[start..].find("}") {
-                                    let stash_ref = &line.content[start..start + end + 1];
+                        let content = line.content();
+                        if content.contains("stash@{") {
+                            if let Some(start) = content.find("stash@{") {
+                                if let Some(end) = content[start..].find("}") {
+                                    let stash_ref = &content[start..start + end + 1];
                                     stash_ref_opt = Some(stash_ref.to_string());
                                 }
                             }
-                        } else if line.content.starts_with("    ") {
-                            file_to_open = Some(line.content.trim().to_string());
+                        } else if content.starts_with("    ") {
+                            file_to_open = Some(content.trim().to_string());
                         }
                     }
-
                     if let Some(stash_ref) = stash_ref_opt {
                         self.stash_pop_target = Some(stash_ref.clone());
                         self.push_line(format!("  Pop {}? [n/Y]", stash_ref), LineStyle::Info);
@@ -841,14 +843,18 @@ impl Repl {
             }
             KeyCode::Home => {
                 let line_idx = self.buffer().cursor_line();
-                self.set_cursor(line_idx, 0);
-                self.ensure_cursor_visible();
+                if let Some(line) = self.buffer().lines().get(line_idx) {
+                    let len = line.content().chars().count();
+                    let col = if len > 0 { len - 1 } else { 0 };
+                    self.set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
                 self.count = None;
             }
             KeyCode::End => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content.chars().count();
+                    let len = line.content().chars().count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -902,7 +908,7 @@ impl Repl {
             KeyCode::Char('$') => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content.chars().count();
+                    let len = line.content().chars().count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -948,7 +954,7 @@ impl Repl {
                     let cursor_col = self.buffer().cursor_col();
                     if let Some(line) = self.buffer().lines().get(cursor_line) {
                         match arboard::Clipboard::new()
-                            .and_then(|mut cb| cb.set_text(line.content.clone()))
+                            .and_then(|mut cb| cb.set_text(line.content().clone()))
                         {
                             Ok(_) => {
                                 self.push_command_info(
@@ -981,9 +987,10 @@ impl Repl {
                     if lines_len > 0 {
                         let end_line = (cursor_line + amount).min(lines_len);
                         let mut yanked_text = String::new();
+
                         for i in cursor_line..end_line {
                             if let Some(line) = self.buffer().lines().get(i) {
-                                yanked_text.push_str(&line.content);
+                                yanked_text.push_str(&line.content());
                                 yanked_text.push('\n');
                             }
                         }
@@ -1176,7 +1183,7 @@ impl Repl {
             .iter()
             .enumerate()
             .filter_map(|(i, l)| {
-                if l.content.to_lowercase().contains(&q_lower) {
+                if l.content().to_lowercase().contains(&q_lower) {
                     Some(i)
                 } else {
                     None
@@ -1408,7 +1415,7 @@ impl Repl {
                                 .buffer()
                                 .lines()
                                 .iter()
-                                .map(|l| l.content.clone())
+                                .map(|l| l.content().clone())
                                 .collect::<Vec<String>>()
                                 .join("\n");
                             match std::fs::write(&canonical_target, content) {
@@ -1449,12 +1456,13 @@ impl Repl {
                             return Ok(CommandResult::Continue);
                         }
                     }
+                    // FIX: clone each String instead of borrowing a temporary
                     let content = self
                         .buffer()
                         .lines()
                         .iter()
-                        .map(|l| l.content.as_str())
-                        .collect::<Vec<_>>()
+                        .map(|l| l.content().clone()) // <-- changed from .as_str()
+                        .collect::<Vec<String>>()
                         .join("\n");
                     match std::fs::write(&resolved, format!("{}\n", content)) {
                         Ok(()) => self.push_command_info(
@@ -1732,9 +1740,29 @@ impl Repl {
                                 LineStyle::Info,
                             ));
 
+                            // Update the :rg command execution
                             for line in lines.iter() {
-                                self.push_line(format!("    {}", line), LineStyle::Plain);
+                                if let Some(colon1) = line.find(':') {
+                                    if let Some(colon2) = line[colon1 + 1..].find(':') {
+                                        let file = &line[..colon1];
+                                        let line_num = &line[colon1 + 1..colon1 + 1 + colon2];
+                                        let content = &line[colon1 + 1 + colon2 + 1..];
+
+                                        let segments = vec![
+                                            (file.to_string(), LineStyle::ToolResult),
+                                            (":".to_string(), LineStyle::Dim),
+                                            (line_num.to_string(), LineStyle::Info),
+                                            (":".to_string(), LineStyle::Dim),
+                                            (content.to_string(), LineStyle::Plain),
+                                        ];
+                                        self.buffer_mut().push(BufferLine::from_segments(segments));
+                                        continue;
+                                    }
+                                }
+                                self.buffer_mut()
+                                    .push(BufferLine::new(line.to_string(), LineStyle::Plain));
                             }
+
                             if lines.is_empty() {
                                 self.push_line("  No matches found", LineStyle::Dim);
                             }
@@ -2140,30 +2168,29 @@ impl Repl {
                 } else {
                     " ".repeat(gutter_w)
                 };
-                let content_to_print = if let Some(query) = &self.search_query {
-                    if self.search_matches.contains(&vrow.logical_line) {
-                        highlight_search(&vrow.content, query)
-                    } else {
-                        vrow.content.clone()
-                    }
-                } else {
-                    vrow.content.clone()
-                };
+
                 queue!(
                     stdout,
                     SetForegroundColor(Color::DarkGrey),
                     Print(&line_num),
                     style::ResetColor,
-                    SetForegroundColor(vrow.fg_color),
-                    if vrow.is_bold {
-                        SetAttribute(Attribute::Bold)
-                    } else {
-                        SetAttribute(Attribute::Reset)
-                    },
-                    Print(&content_to_print),
-                    style::ResetColor,
-                    SetAttribute(Attribute::Reset)
                 )?;
+
+                // Print each segment with its own color
+                for (text, style) in &vrow.segments {
+                    queue!(
+                        stdout,
+                        SetForegroundColor(style.fg_color()),
+                        if style.is_bold() {
+                            SetAttribute(Attribute::Bold)
+                        } else {
+                            SetAttribute(Attribute::Reset)
+                        },
+                        Print(text),
+                        style::ResetColor,
+                        SetAttribute(Attribute::Reset)
+                    )?;
+                }
             }
         }
         let cursor_line_idx = self.buffer().cursor_line();
@@ -2188,7 +2215,8 @@ impl Repl {
                     let y_pos = (i - vscroll) as u16;
                     let x_pos = (self.gutter_width() + cursor_col_idx - vrow.start_col) as u16;
                     if in_range && vrow.start_col != vrow.end_col {
-                        if let Some(ch) = lines[cursor_line_idx].content.chars().nth(cursor_col_idx)
+                        if let Some(ch) =
+                            lines[cursor_line_idx].content().chars().nth(cursor_col_idx)
                         {
                             queue!(
                                 stdout,
@@ -2314,7 +2342,11 @@ impl Repl {
             self.push_line("    (none)", LineStyle::Dim);
         } else {
             for f in &staged {
-                self.push_line(format!("    {}", f), LineStyle::ToolResult);
+                let segments = vec![
+                    ("    + ".to_string(), LineStyle::ToolResult),
+                    (f.clone(), LineStyle::Plain),
+                ];
+                self.buffer_mut().push(BufferLine::from_segments(segments));
             }
         }
         self.push_line("", LineStyle::Plain);
@@ -2397,12 +2429,12 @@ impl Repl {
             self.buffer()
                 .lines()
                 .iter()
-                .position(|l| l.content.trim() == file && l.content.starts_with("    "))
+                .position(|l| l.content().trim() == file && l.content().starts_with("    "))
         } else {
             self.buffer()
                 .lines()
                 .iter()
-                .position(|l| l.content.starts_with("    ") && l.content.trim() != "(none)")
+                .position(|l| l.content().starts_with("    ") && l.content().trim() != "(none)")
         };
         if let Some(idx) = target_line {
             self.buffer_mut().set_cursor(idx, 0);
