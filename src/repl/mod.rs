@@ -644,14 +644,18 @@ impl Repl {
                     if let Ok(o) = out {
                         let msg = String::from_utf8_lossy(&o.stdout);
                         let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
                         if !msg.trim().is_empty() {
-                            self.push_command_info(format!("  📦 {}", msg.trim()), LineStyle::Info);
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  📦 {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
                         }
                         if !err.trim().is_empty() {
-                            self.push_command_info(
+                            self.buffers[c_idx].push(BufferLine::new(
                                 format!("  ❌ {}", err.trim()),
                                 LineStyle::Error,
-                            );
+                            ));
                         }
                     }
                     self.show_git_status(stdout, None)?;
@@ -664,7 +668,6 @@ impl Repl {
             }
             return Ok(());
         }
-
         if self.buffer().name() == "GitStatus" {
             match key.code {
                 KeyCode::Char('q') => {
@@ -692,17 +695,20 @@ impl Repl {
                     if let Ok(o) = out {
                         let msg = String::from_utf8_lossy(&o.stdout);
                         let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
                         if !msg.trim().is_empty() {
-                            self.push_command_info(format!("  📦 {}", msg.trim()), LineStyle::Info);
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  📦 {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
                         } else if !err.trim().is_empty() {
-                            self.push_command_info(
+                            self.buffers[c_idx].push(BufferLine::new(
                                 format!("  ❌ {}", err.trim()),
                                 LineStyle::Error,
-                            );
+                            ));
                         }
                     }
-                    self.close_buffer();
-                    self.render(stdout)?;
+                    self.show_git_status(stdout, None)?;
                     return Ok(());
                 }
                 KeyCode::Char('s') => {
