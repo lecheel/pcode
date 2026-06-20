@@ -1,5 +1,5 @@
 pcode — vim-modal patch REPL
-
+```
   i                → enter Insert mode (type message to LLM)
   :                → enter Command mode (:help, :quit, …)
   F12              → Cancel running task
@@ -64,3 +64,4 @@ I have a wide range of **surgical code editing skills** organized into four phas
 ---
 
 **In short**: I can surgically edit Rust (and other language) code with AST-level precision, never breaking the structure by accident. I work best when you tell me what you want to build, fix, or refactor! 🛠️
+```
