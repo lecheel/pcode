@@ -1,0 +1,21 @@
+[package]
+name = "prepl"
+version = "0.3.0"
+edition = "2021"
+description = "Interactive REPL client with sessions for Ollama/llama.cpp code-patch tool calling"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+colored = "2"
+regex = "1"
+unicode-width = "0.1"
+anyhow = "1"
+dirs = "5"
+arboard = "3.6.1"
+chrono = { version = "0.4", features = ["serde"] }

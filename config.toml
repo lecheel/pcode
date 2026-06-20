@@ -1,0 +1,96 @@
+# patch-repl configuration
+# Place in project root as patch-repl.toml or specify with -c path
+
+[server]
+# base_url = "https://api.openai.com/v1"
+base_url = "http://localhost:11838"
+api_key = "sk-..."
+model = ""
+timeout = 360
+
+[tools]
+# Path to codex-eyes binary (auto-detected if empty)
+codex_eyes_binary = ""
+# Auto-run gitdiff after apply_patch / createFile
+auto_verify = true
+# allow_paths = ["/tmp"]
+
+[tools.disabled]
+# Set to true to disable any built-in tool
+codex_eyes_shell = true
+
+[debug]
+enabled = false
+
+[repl]
+
+# ─── Custom shell-based tools ───────────────────────────────────────
+# These are added to the LLM tool list and executed via `sh -c`.
+# Placeholders like {param} are substituted from the tool arguments.
+
+[[tools.custom]]
+name = "codex_eyes_shell"
+description = "Execute a shell command and return stdout/stderr. Use for running tests, builds, linting, etc."
+
+[tools.custom.parameters.command]
+type = "string"
+description = "Shell command to execute"
+required = true
+
+[tools.custom.parameters.timeout]
+type = "integer"
+description = "Timeout in seconds (default: 30)"
+required = false
+
+[tools.custom.execute]
+type = "shell"
+command_template = "{command}"
+timeout_secs = 30
+
+[tools.custom.parameters.path]
+type = "string"
+description = "File path to read"
+required = true
+
+[tools.custom.parameters.start]
+type = "integer"
+description = "Start line number (1-based, optional)"
+required = false
+
+[tools.custom.parameters.end]
+type = "integer"
+description = "End line number (1-based, inclusive, optional)"
+required = false
+
+[[tools.custom]]
+name = "codex_eyes_run"
+description = "Run a cargo command (check, build, test, clippy, etc.) and return output."
+
+[tools.custom.parameters.subcommand]
+type = "string"
+description = "Cargo subcommand (check, build, test, clippy, fmt, etc.)"
+required = true
+
+[tools.custom.parameters.args]
+type = "string"
+description = "Additional arguments"
+required = false
+
+[tools.custom.execute]
+type = "shell"
+command_template = "cargo {subcommand} {args}"
+timeout_secs = 60
+
+[[tools.custom]]
+name = "codex_eyes_undo"
+description = "Undo uncommitted changes in a file using git checkout. Use to revert failed patches."
+
+[tools.custom.parameters.path]
+type = "string"
+description = "File path to revert"
+required = true
+
+[tools.custom.execute]
+type = "shell"
+command_template = "git checkout -- {path}"
+timeout_secs = 10
