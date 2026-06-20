@@ -669,6 +669,20 @@ impl Repl {
             return Ok(());
         }
 
+        if key.code == KeyCode::Enter && self.buffer().name() == "fd" {
+            let cursor_line = self.buffer().cursor_line();
+            if let Some(line) = self.buffer().lines().get(cursor_line) {
+                let content = line.content().trim().to_string();
+                if !content.is_empty()
+                    && !content.starts_with('[')
+                    && !content.starts_with("No matches")
+                {
+                    self.load_file_to_buffer(&content, stdout)?;
+                    return Ok(());
+                }
+            }
+        }
+
         // Enter handler for rg buffer (supports both grouped and single-line formats)
         if key.code == KeyCode::Enter && self.buffer().name() == "rg" {
             let cursor_line = self.buffer().cursor_line();
@@ -1902,9 +1916,44 @@ impl Repl {
                     match output {
                         Ok(out) => {
                             let stdout_str = String::from_utf8_lossy(&out.stdout);
-                            for line in stdout_str.lines().take(30) {
-                                self.push_command_info(format!("    {}", line), LineStyle::Plain);
+                            let lines: Vec<&str> = stdout_str.lines().collect();
+
+                            let new_buf_idx = if self.buffer().name() == "fd" {
+                                self.active_buffer
+                            } else {
+                                let idx = self.buffers.len();
+                                self.buffers.push(ResponseBuffer::with_name("fd"));
+                                idx
+                            };
+                            self.active_buffer = new_buf_idx;
+                            self.buffers[new_buf_idx].clear();
+
+                            let c_idx = self.console_buffer_idx();
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  🔍 fd: {}", arg),
+                                LineStyle::Info,
+                            ));
+
+                            for line in lines.iter().take(1000) {
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                let path = line.trim_start_matches("./");
+                                self.buffers[new_buf_idx]
+                                    .push(BufferLine::new(path.to_string(), LineStyle::Plain));
                             }
+
+                            if lines.is_empty() {
+                                self.buffers[new_buf_idx].push(BufferLine::new(
+                                    "  No matches found".to_string(),
+                                    LineStyle::Dim,
+                                ));
+                            }
+                            self.buffers[new_buf_idx].push(BufferLine::new(
+                                format!("  [{} files]", lines.len()),
+                                LineStyle::Dim,
+                            ));
+                            self.scroll_to_bottom();
                         }
                         Err(e) => self.push_command_info(
                             format!("  ❌ Find failed: {}", e),
