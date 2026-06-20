@@ -2387,7 +2387,7 @@ impl Repl {
         self.push_line("", LineStyle::Plain);
 
         self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
-        self.push_line("  [c] Stage tracked and commit with LLM", LineStyle::Info);
+        // self.push_line("  [c] Stage tracked and commit with LLM", LineStyle::Info);
         self.push_line(
             "  [s] Toggle staged  [Enter] Open file  [z] stash [q] Close",
             LineStyle::Dim,
