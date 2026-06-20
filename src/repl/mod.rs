@@ -21,7 +21,7 @@ use unicode_width::UnicodeWidthStr;
 const COMMAND_LIST: &[&str] = &[
     "quit", "q", "exit", "help", "h", "?", "save", "load", "sessions", "delete", "rm", "reset",
     "config", "tools", "debug", "status", "cls", "clear", "skills", "rg", "grep", "fd", "find",
-    "ls", "cancel", "bn", "bp", "bd", "open", "e", "saveas", "write", "workflow",
+    "ls", "cancel", "bn", "bp", "bd", "open", "e", "saveas", "write", "workflow", "gs",
 ];
 struct TerminalGuard;
 impl TerminalGuard {
@@ -550,6 +550,10 @@ impl Repl {
                 self.show_skill_group_popup();
             }
             self.render(stdout)?;
+            return Ok(());
+        }
+        if key.code == KeyCode::F(9) {
+            self.show_git_status(stdout)?;
             return Ok(());
         }
         let skill_idx = match key.code {
@@ -1660,6 +1664,9 @@ impl Repl {
                     }
                 }
             }
+            "gs" => {
+                self.show_git_status(stdout)?;
+            }
             "ls" => {
                 let path = if arg.is_empty() { "." } else { arg };
                 let output = std::process::Command::new("ls")
@@ -2102,6 +2109,137 @@ impl Repl {
         let mins = (secs / 60) % 60;
         let secs = secs % 60;
         format!("{:02}:{:02}:{:02}", hours, mins, secs)
+    }
+    fn show_git_status(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let output = std::process::Command::new("git")
+            .arg("status")
+            .arg("--porcelain=v1")
+            .output();
+
+        let new_buf_idx = self.buffers.len();
+        self.buffers.push(ResponseBuffer::with_name("Git Status"));
+        self.active_buffer = new_buf_idx;
+        let c_idx = self.console_buffer_idx();
+        self.buffers[c_idx].push(BufferLine::new("  📊 Git Status", LineStyle::Info));
+
+        let mut staged = Vec::new();
+        let mut unstaged = Vec::new();
+        let mut untracked = Vec::new();
+
+        if let Ok(out) = output {
+            let s = String::from_utf8_lossy(&out.stdout);
+            for line in s.lines() {
+                if line.len() < 3 {
+                    continue;
+                }
+                let status = &line[..2];
+                let file = line[3..].trim().to_string();
+                if status == "??" {
+                    untracked.push(file);
+                } else {
+                    let x = status.chars().next().unwrap_or(' ');
+                    let y = status.chars().nth(1).unwrap_or(' ');
+                    if x != ' ' && x != '?' {
+                        staged.push(file.clone());
+                    }
+                    if y != ' ' && y != '?' {
+                        unstaged.push(file);
+                    }
+                }
+            }
+        }
+
+        self.push_line(
+            format!("  Stage Changes ({})", staged.len()),
+            LineStyle::Info,
+        );
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        if staged.is_empty() {
+            self.push_line("    (none)", LineStyle::Dim);
+        } else {
+            for f in &staged {
+                self.push_line(format!("    {}", f), LineStyle::Plain);
+            }
+        }
+        self.push_line("", LineStyle::Plain);
+
+        self.push_line(
+            format!("  Unstage Changes ({})", unstaged.len()),
+            LineStyle::Info,
+        );
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        if unstaged.is_empty() {
+            self.push_line("    (none)", LineStyle::Dim);
+        } else {
+            for f in &unstaged {
+                self.push_line(format!("    {}", f), LineStyle::Plain);
+            }
+        }
+        self.push_line("", LineStyle::Plain);
+
+        self.push_line(
+            format!("  Untracked Files ({})", untracked.len()),
+            LineStyle::Info,
+        );
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        if untracked.is_empty() {
+            self.push_line("    (none)", LineStyle::Dim);
+        } else {
+            for f in &untracked {
+                self.push_line(format!("    {}", f), LineStyle::Plain);
+            }
+        }
+        self.push_line("", LineStyle::Plain);
+
+        self.push_line("  ------ Branch ------", LineStyle::Info);
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        let branch = std::process::Command::new("git")
+            .arg("branch")
+            .arg("--show-current")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let time = std::process::Command::new("git")
+            .arg("log")
+            .arg("-1")
+            .arg("--format=%cr")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if branch.is_empty() {
+            self.push_line("    (detached HEAD)", LineStyle::Dim);
+        } else {
+            self.push_line(format!("    * {} {}", branch, time), LineStyle::Plain);
+        }
+        self.push_line("", LineStyle::Plain);
+
+        self.push_line("  ------ Stash ------", LineStyle::Info);
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        let stash = std::process::Command::new("git")
+            .arg("stash")
+            .arg("list")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        if stash.lines().next().is_none() {
+            self.push_line("    (none)", LineStyle::Dim);
+        } else {
+            for line in stash.lines() {
+                self.push_line(format!("    {}", line), LineStyle::Plain);
+            }
+        }
+        self.push_line("", LineStyle::Plain);
+
+        self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
+        self.push_line("  [c] Stage all and commit with LLM", LineStyle::Info);
+        self.push_line(
+            "  [s] Toggle staged  [Enter] Open file  [z] stash [q] Close",
+            LineStyle::Dim,
+        );
+
+        self.scroll_to_bottom();
+        self.render(stdout)?;
+        Ok(())
     }
     fn show_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
