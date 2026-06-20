@@ -553,7 +553,7 @@ impl Repl {
             return Ok(());
         }
         if key.code == KeyCode::F(9) {
-            self.show_git_status(stdout)?;
+            self.show_git_status(stdout, None)?;
             return Ok(());
         }
         let skill_idx = match key.code {
@@ -631,6 +631,94 @@ impl Repl {
         self.render(stdout)
     }
     fn handle_normal_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if self.buffer().name() == "Git Status" {
+            match key.code {
+                KeyCode::Char('q') => {
+                    self.close_buffer();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('c') => {
+                    let _ = std::process::Command::new("git")
+                        .arg("add")
+                        .arg("-u")
+                        .output();
+                    self.close_buffer();
+                    self.mode = Mode::Insert;
+                    self.editor.clear();
+                    let msg = "Please review the staged changes, write a concise commit message, and commit them.";
+                    for c in msg.chars() {
+                        self.editor.insert_char(c);
+                    }
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('z') => {
+                    let out = std::process::Command::new("git").arg("stash").output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        if !msg.trim().is_empty() {
+                            self.push_command_info(format!("  📦 {}", msg.trim()), LineStyle::Info);
+                        } else if !err.trim().is_empty() {
+                            self.push_command_info(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            );
+                        }
+                    }
+                    self.close_buffer();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('s') => {
+                    let cursor_line = self.buffer().cursor_line();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        if line.content.starts_with("    ") {
+                            let file = line.content.trim().to_string();
+                            let status_out = std::process::Command::new("git")
+                                .arg("status")
+                                .arg("--porcelain")
+                                .output();
+                            if let Ok(so) = status_out {
+                                let s = String::from_utf8_lossy(&so.stdout);
+                                for l in s.lines() {
+                                    if l.len() > 3 && l[3..].trim() == file {
+                                        let x = l.chars().next().unwrap_or(' ');
+                                        if x != ' ' && x != '?' {
+                                            let _ = std::process::Command::new("git")
+                                                .arg("restore")
+                                                .arg("--staged")
+                                                .arg(&file)
+                                                .output();
+                                        } else {
+                                            let _ = std::process::Command::new("git")
+                                                .arg("add")
+                                                .arg(&file)
+                                                .output();
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            self.show_git_status(stdout, Some(&file))?;
+                            return Ok(());
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    let cursor_line = self.buffer().cursor_line();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        if line.content.starts_with("    ") {
+                            let file = line.content.trim().to_string();
+                            self.load_file_to_buffer(&file, stdout)?;
+                            return Ok(());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         let amount = self.count.unwrap_or(1);
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -1665,7 +1753,7 @@ impl Repl {
                 }
             }
             "gs" => {
-                self.show_git_status(stdout)?;
+                self.show_git_status(stdout, None)?;
             }
             "ls" => {
                 let path = if arg.is_empty() { "." } else { arg };
@@ -2110,15 +2198,25 @@ impl Repl {
         let secs = secs % 60;
         format!("{:02}:{:02}:{:02}", hours, mins, secs)
     }
-    fn show_git_status(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+    fn show_git_status(
+        &mut self,
+        stdout: &mut io::Stdout,
+        target_file: Option<&str>,
+    ) -> anyhow::Result<()> {
         let output = std::process::Command::new("git")
             .arg("status")
             .arg("--porcelain=v1")
             .output();
 
-        let new_buf_idx = self.buffers.len();
-        self.buffers.push(ResponseBuffer::with_name("Git Status"));
+        let new_buf_idx = if self.buffer().name() == "Git Status" {
+            self.active_buffer
+        } else {
+            let idx = self.buffers.len();
+            self.buffers.push(ResponseBuffer::with_name("Git Status"));
+            idx
+        };
         self.active_buffer = new_buf_idx;
+        self.buffers[new_buf_idx].clear();
         let c_idx = self.console_buffer_idx();
         self.buffers[c_idx].push(BufferLine::new("  📊 Git Status", LineStyle::Info));
 
@@ -2231,13 +2329,30 @@ impl Repl {
         self.push_line("", LineStyle::Plain);
 
         self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
-        self.push_line("  [c] Stage all and commit with LLM", LineStyle::Info);
+        self.push_line("  [c] Stage tracked and commit with LLM", LineStyle::Info);
         self.push_line(
             "  [s] Toggle staged  [Enter] Open file  [z] stash [q] Close",
             LineStyle::Dim,
         );
 
-        self.scroll_to_bottom();
+        let target_line = if let Some(file) = target_file {
+            self.buffer()
+                .lines()
+                .iter()
+                .position(|l| l.content.trim() == file && l.content.starts_with("    "))
+        } else {
+            self.buffer()
+                .lines()
+                .iter()
+                .position(|l| l.content.starts_with("    ") && l.content.trim() != "(none)")
+        };
+        if let Some(idx) = target_line {
+            self.buffer_mut().set_cursor(idx, 0);
+        } else {
+            self.scroll_to_bottom();
+        }
+        self.ensure_cursor_visible();
+        self.mode = Mode::Normal;
         self.render(stdout)?;
         Ok(())
     }
