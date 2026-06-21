@@ -512,7 +512,11 @@ impl Repl {
                     return Ok(());
                 }
                 KeyCode::Char('w') => {
-                    self.execute_command("write", stdout)?;
+                    if self.buffer().name() == "SedChanges" {
+                        let _ = self.apply_sed_changes(stdout);
+                    } else {
+                        self.execute_command("write", stdout)?;
+                    }
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -900,6 +904,15 @@ impl Repl {
             KeyCode::Char('I') => {
                 self.mode = Mode::Insert;
                 self.editor.move_home();
+                self.count = None;
+            }
+            KeyCode::Char('w') => {
+                if self.buffer().name() == "SedChanges" {
+                    self.apply_sed_changes(stdout)?;
+                    self.count = None;
+                    self.pending = None;
+                    return Ok(());
+                }
                 self.count = None;
             }
             KeyCode::Char('o') => {
@@ -1546,35 +1559,52 @@ impl Repl {
             }
 
             "sed" => {
+                let arg = parts.get(1).copied().unwrap_or("");
                 if arg.is_empty() {
-                    self.push_command_info(
-                        "  Usage: :sed <find>|<replace> [path] or :sed /find/replace/ [path]",
-                        LineStyle::Dim,
-                    );
+                    self.push_command_info("  Usage: :sed <find> <replace> [path]", LineStyle::Dim);
                 } else {
                     let (find, replace, path) = if arg.starts_with('/') {
-                        let parts: Vec<&str> = arg[1..].splitn(3, '/').collect();
-                        if parts.len() >= 2 {
-                            (
-                                parts[0].to_string(),
-                                parts[1].to_string(),
-                                if parts.len() == 3 {
-                                    parts[2].to_string()
-                                } else {
-                                    ".".to_string()
-                                },
-                            )
+                        // Format: /find/replace/ [path]
+                        let parts: Vec<&str> = arg[1..].splitn(2, '/').collect();
+                        if parts.len() == 2 {
+                            let find = parts[0].to_string();
+                            let rest = parts[1].trim_start_matches('/');
+                            let parts2: Vec<&str> = rest.splitn(2, ' ').collect();
+                            let replace = parts2[0].to_string();
+                            let path = if parts2.len() == 2 {
+                                parts2[1].trim().to_string()
+                            } else {
+                                ".".to_string()
+                            };
+                            (find, replace, path)
                         } else {
                             (String::new(), String::new(), ".".to_string())
                         }
+                    } else if arg.contains('|') {
+                        // Format: find|replace [path]
+                        let parts: Vec<&str> = arg.splitn(2, '|').collect();
+                        let find = parts[0].to_string();
+                        if parts.len() == 2 {
+                            let parts2: Vec<&str> = parts[1].splitn(2, ' ').collect();
+                            let replace = parts2[0].to_string();
+                            let path = if parts2.len() == 2 {
+                                parts2[1].trim().to_string()
+                            } else {
+                                ".".to_string()
+                            };
+                            (find, replace, path)
+                        } else {
+                            (find, String::new(), ".".to_string())
+                        }
                     } else {
-                        let parts: Vec<&str> = arg.splitn(3, '|').collect();
+                        // Format: find replace [path]
+                        let parts: Vec<&str> = arg.splitn(3, ' ').collect();
                         if parts.len() >= 2 {
                             (
-                                parts[0].to_string(),
-                                parts[1].to_string(),
+                                unquote(parts[0]),
+                                unquote(parts[1]),
                                 if parts.len() == 3 {
-                                    parts[2].to_string()
+                                    unquote(parts[2])
                                 } else {
                                     ".".to_string()
                                 },
@@ -1640,7 +1670,7 @@ impl Repl {
 
                                     self.buffers[new_buf_idx].push(BufferLine::from_segments(
                                         vec![
-                                            ("📄 ".to_string(), LineStyle::Info),
+                                            ("@@ ".to_string(), LineStyle::Info),
                                             (
                                                 format!("{}:{}", file, line_num),
                                                 LineStyle::ToolResult,
@@ -1653,7 +1683,7 @@ impl Repl {
                                         &find,
                                         LineStyle::Plain,
                                         LineStyle::User,
-                                        "  - ",
+                                        "- ",
                                         LineStyle::Error,
                                     );
                                     self.buffers[new_buf_idx]
@@ -1664,7 +1694,7 @@ impl Repl {
                                         &replace,
                                         LineStyle::Plain,
                                         LineStyle::ToolResult,
-                                        "  + ",
+                                        "+ ",
                                         LineStyle::ToolResult,
                                     );
                                     self.buffers[new_buf_idx]
@@ -1681,13 +1711,7 @@ impl Repl {
                                     LineStyle::Dim,
                                 ));
                             } else {
-                                self.buffers[new_buf_idx].push(BufferLine::new(
-                                    format!(
-                                        "  {} proposed changes. [dd] to discard, [w] to apply",
-                                        count
-                                    ),
-                                    LineStyle::Info,
-                                ));
+                                self.buffers[new_buf_idx].push(BufferLine::new(format!("  {} proposed changes. Edit buffer, [dd] to delete, [w] to apply", count), LineStyle::Info));
                             }
                             self.scroll_to_bottom();
                         }
@@ -1704,11 +1728,6 @@ impl Repl {
                     );
                 } else {
                     let path_str = if arg.is_empty() {
-                        self.buffer().name().to_string()
-                    } else {
-                        arg.to_string()
-                    };
-                    let path_str = if arg.is_empty() {
                         let name = self.buffer().name().to_string();
                         let name = if name == "rg" {
                             "rg_results.txt".to_string()
@@ -1717,8 +1736,7 @@ impl Repl {
                         } else {
                             name
                         };
-                        let name = name.replace('*', "");
-                        name
+                        name.replace('*', "")
                     } else {
                         arg.to_string()
                     };
@@ -3155,6 +3173,105 @@ impl Repl {
         }
         self.render(stdout)
     }
+    fn apply_sed_changes(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let lines = self.buffer().lines();
+        let mut changes_to_apply: std::collections::HashMap<String, Vec<(usize, String)>> =
+            std::collections::HashMap::new();
+
+        let mut i = 0;
+        while i < lines.len() {
+            let content = lines[i].content();
+            if content.starts_with("@@ ") {
+                let parts: Vec<&str> = content[3..].splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    let file = parts[0].to_string();
+                    let line_num = parts[1].parse::<usize>().unwrap_or(0);
+
+                    if i + 2 < lines.len() {
+                        let old_line_content = lines[i + 1].content();
+                        let new_line_content = lines[i + 2].content();
+
+                        if old_line_content.starts_with("- ") && new_line_content.starts_with("+ ")
+                        {
+                            let new_text = new_line_content[2..].to_string();
+                            changes_to_apply
+                                .entry(file)
+                                .or_default()
+                                .push((line_num, new_text));
+                            i += 3;
+                            if i < lines.len() && lines[i].content().is_empty() {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let mut applied_count: usize = 0;
+        let mut failed_count: usize = 0;
+
+        for (file, mut changes) in changes_to_apply {
+            changes.sort_by(|a, b| b.0.cmp(&a.0));
+
+            let root = std::path::PathBuf::from(&self.config.tools.project_root);
+            let resolved = if std::path::Path::new(&file).is_absolute() {
+                std::path::PathBuf::from(&file)
+            } else {
+                root.join(&file)
+            };
+
+            if let Ok(content) = std::fs::read_to_string(&resolved) {
+                let has_trailing_newline = content.ends_with('\n');
+                let mut lines_vec: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                let mut modified = false;
+
+                for (line_num, new_text) in &changes {
+                    let idx = line_num.saturating_sub(1);
+                    if idx < lines_vec.len() {
+                        if lines_vec[idx] != *new_text {
+                            lines_vec[idx] = new_text.clone();
+                            modified = true;
+                        }
+                        applied_count += 1;
+                    } else {
+                        failed_count += 1;
+                    }
+                }
+
+                if modified {
+                    let mut new_content = lines_vec.join("\n");
+                    if has_trailing_newline {
+                        new_content.push('\n');
+                    }
+                    if std::fs::write(&resolved, new_content).is_err() {
+                        failed_count += changes.len();
+                        applied_count = applied_count.saturating_sub(changes.len());
+                    }
+                }
+            } else {
+                failed_count += changes.len();
+            }
+        }
+
+        self.push_command_info(
+            format!(
+                "  ✅ Applied {} changes. {} failed.",
+                applied_count, failed_count
+            ),
+            if failed_count > 0 {
+                LineStyle::Error
+            } else {
+                LineStyle::ToolResult
+            },
+        );
+        self.close_buffer();
+        self.scroll_to_bottom();
+        self.render(stdout)?;
+        Ok(())
+    }
 }
 fn list_project_files(root: &std::path::Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -3180,38 +3297,6 @@ fn list_project_files(root: &std::path::Path) -> Vec<String> {
     walk(root, root, &mut files, 0);
     files.sort();
     files
-}
-fn highlight_segments(
-    line: &str,
-    pattern: &str,
-    line_style: LineStyle,
-    pattern_style: LineStyle,
-    prefix: &str,
-    prefix_style: LineStyle,
-) -> Vec<(String, LineStyle)> {
-    let mut segments = vec![(prefix.to_string(), prefix_style)];
-    if pattern.is_empty() {
-        segments.push((line.to_string(), line_style));
-        return segments;
-    }
-    let mut last_end = 0;
-    let mut start = 0;
-    while let Some(rel_start) = line[start..].find(pattern) {
-        let abs_start = start + rel_start;
-        if abs_start > last_end {
-            segments.push((line[last_end..abs_start].to_string(), line_style));
-        }
-        segments.push((
-            line[abs_start..abs_start + pattern.len()].to_string(),
-            pattern_style,
-        ));
-        last_end = abs_start + pattern.len();
-        start = last_end;
-    }
-    if last_end < line.len() {
-        segments.push((line[last_end..].to_string(), line_style));
-    }
-    segments
 }
 fn highlight_search(content: &str, query: &str) -> String {
     let mut result = String::new();
@@ -3246,4 +3331,48 @@ fn list_impl_files(root: &std::path::Path, impl_dir: &std::path::Path) -> Vec<St
     walk(impl_dir, root, &mut files);
     files.sort();
     files
+}
+
+fn highlight_segments(
+    line: &str,
+    pattern: &str,
+    line_style: LineStyle,
+    pattern_style: LineStyle,
+    prefix: &str,
+    prefix_style: LineStyle,
+) -> Vec<(String, LineStyle)> {
+    let mut segments = vec![(prefix.to_string(), prefix_style)];
+    if pattern.is_empty() {
+        segments.push((line.to_string(), line_style));
+        return segments;
+    }
+    let mut last_end = 0;
+    let mut start = 0;
+    while let Some(rel_start) = line[start..].find(pattern) {
+        let abs_start = start + rel_start;
+        if abs_start > last_end {
+            segments.push((line[last_end..abs_start].to_string(), line_style));
+        }
+        segments.push((
+            line[abs_start..abs_start + pattern.len()].to_string(),
+            pattern_style,
+        ));
+        last_end = abs_start + pattern.len();
+        start = last_end;
+    }
+    if last_end < line.len() {
+        segments.push((line[last_end..].to_string(), line_style));
+    }
+    segments
+}
+
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        s[1..s.len() - 1].to_string()
+    } else if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
 }
