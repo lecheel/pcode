@@ -87,6 +87,7 @@ pub struct Repl {
     search_match_idx: Option<usize>,
     stash_pop_target: Option<String>,
     cached_git_info: String,
+    pending_reset_target: Option<String>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -131,6 +132,7 @@ impl Repl {
             search_matches: Vec::new(),
             search_match_idx: None,
             stash_pop_target: None,
+            pending_reset_target: None,
             cached_git_info: String::new(),
         }
     }
@@ -711,6 +713,42 @@ impl Repl {
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if let Some(target) = self.pending_reset_target.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let out = std::process::Command::new("git")
+                        .arg("checkout")
+                        .arg("HEAD")
+                        .arg("--")
+                        .arg(&target)
+                        .output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
+                        if !msg.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ↩️  {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
+                        }
+                        if !err.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            ));
+                        }
+                    }
+                    self.show_git_status(stdout, Some(&target))?;
+                }
+                _ => {
+                    self.push_line("  Cancelled reset.", LineStyle::Dim);
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                }
+            }
+            return Ok(());
+        }
         if let Some(target) = self.stash_pop_target.take() {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -904,6 +942,48 @@ impl Repl {
                                 }
                             }
                             self.show_git_status(stdout, Some(&file))?;
+                            return Ok(());
+                        }
+                    }
+                }
+                KeyCode::Char('r') => {
+                    let cursor_line = self.buffer().cursor_line();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        let content = line.content();
+                        if content.starts_with("    ") && !content.contains("(none)") {
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
+
+                            let out = std::process::Command::new("git")
+                                .arg("diff")
+                                .arg("--numstat")
+                                .arg("HEAD")
+                                .arg("--")
+                                .arg(&file)
+                                .output();
+                            let mut loc_info = "0 LOC".to_string();
+                            if let Ok(o) = out {
+                                let stdout = String::from_utf8_lossy(&o.stdout);
+                                if let Some(line) = stdout.lines().next() {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    if parts.len() >= 2 {
+                                        let added = parts[0];
+                                        let deleted = parts[1];
+                                        loc_info = format!("+{} -{} LOC", added, deleted);
+                                    }
+                                }
+                            }
+
+                            self.pending_reset_target = Some(file.clone());
+                            self.push_line(
+                                format!("  Reset {} to HEAD? ({}) [n/Y]", file, loc_info),
+                                LineStyle::Info,
+                            );
+                            self.scroll_to_bottom();
+                            self.render(stdout)?;
                             return Ok(());
                         }
                     }
@@ -3293,7 +3373,7 @@ impl Repl {
 
         self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
         self.push_line(
-            "  [s] Toggle staged  [Enter] Open file  [z] stash [q] Close",
+            "  [s] Toggle staged  [r] Reset file  [Enter] Open file  [z] stash [q] Close",
             LineStyle::Dim,
         );
 
