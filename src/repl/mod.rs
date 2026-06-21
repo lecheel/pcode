@@ -862,7 +862,11 @@ impl Repl {
                     if let Some(line) = self.buffer().lines().get(cursor_line) {
                         let content = line.content();
                         if content.starts_with("    ") {
-                            let file = content.trim().to_string();
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
 
                             let status_out = std::process::Command::new("git")
                                 .arg("status")
@@ -908,7 +912,12 @@ impl Repl {
                                 }
                             }
                         } else if content.starts_with("    ") {
-                            file_to_open = Some(content.trim().to_string());
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
+                            file_to_open = Some(file);
                         }
                     }
                     if let Some(stash_ref) = stash_ref_opt {
@@ -2884,7 +2893,7 @@ impl Repl {
         }
         let cursor_line_idx = self.buffer().cursor_line();
         let cursor_col_idx = self.buffer().cursor_col();
-        if !self.waiting && matches!(self.mode, Mode::Normal) && !self.popup.active {
+        if matches!(self.mode, Mode::Normal) && !self.popup.active {
             for (i, vrow) in visual_rows.iter().enumerate() {
                 if i < vscroll || i >= vscroll + ra_height {
                     continue;
@@ -3224,10 +3233,18 @@ impl Repl {
         );
 
         let target_line = if let Some(file) = target_file {
-            self.buffer()
-                .lines()
-                .iter()
-                .position(|l| l.content().trim() == file && l.content().starts_with("    "))
+            self.buffer().lines().iter().position(|l| {
+                let c = l.content();
+                if !c.starts_with("    ") {
+                    return false;
+                }
+                let cleaned = if c.starts_with("    + ") {
+                    c.trim_start_matches("    + ").trim()
+                } else {
+                    c.trim_start_matches("    ").trim()
+                };
+                cleaned == file
+            })
         } else {
             self.buffer()
                 .lines()
