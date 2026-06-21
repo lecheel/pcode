@@ -207,6 +207,8 @@ impl Default for DebugConfig {
 pub struct ReplConfig {
     #[serde(default = "default_history_file")]
     pub history_file: String,
+    #[serde(default = "default_command_history_file")]
+    pub command_history_file: String,
     #[serde(default = "default_sessions_dir")]
     pub sessions_dir: String,
     #[serde(default = "default_max_rounds")]
@@ -219,6 +221,7 @@ impl Default for ReplConfig {
     fn default() -> Self {
         Self {
             history_file: default_history_file(),
+            command_history_file: default_command_history_file(),
             sessions_dir: default_sessions_dir(),
             max_rounds: default_max_rounds(),
             auto_enable_tools_on_code_request: true,
@@ -235,6 +238,14 @@ fn pcode_dir() -> std::path::PathBuf {
 fn ensure_pcode_dirs() {
     let dir = pcode_dir();
     let _ = std::fs::create_dir_all(dir.join("sessions"));
+}
+
+fn default_command_history_file() -> String {
+    ensure_pcode_dirs();
+    pcode_dir()
+        .join("cmd_history.txt")
+        .to_string_lossy()
+        .to_string()
 }
 
 fn default_history_file() -> String {

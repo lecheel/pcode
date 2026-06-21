@@ -93,8 +93,13 @@ const INPUT_AREA_ROWS: usize = 2;
 impl Repl {
     pub fn new(agent: PatchAgent, config: AppConfig) -> Self {
         let (width, height) = terminal::size().unwrap_or((80, 24));
+
         let mut editor = LineEditor::new();
         editor.load_history(&config.repl.history_file);
+
+        let mut cmd_editor = LineEditor::new();
+        cmd_editor.load_history(&config.repl.command_history_file);
+
         let cached_skill_group = agent.active_skill_group;
         Self {
             mode: Mode::Insert,
@@ -103,7 +108,7 @@ impl Repl {
             llm_buffer_idx: Some(0),
             console_buffer_idx: None,
             editor,
-            cmd_editor: LineEditor::new(),
+            cmd_editor,
             agent: Some(agent),
             config,
             width,
@@ -534,6 +539,8 @@ impl Repl {
             match key.code {
                 KeyCode::Char('q') => {
                     self.editor.save_history(&self.config.repl.history_file);
+                    self.cmd_editor
+                        .save_history(&self.config.repl.command_history_file);
                     if let Some(handle) = self.agent_handle.take() {
                         handle.abort();
                     }
@@ -2568,6 +2575,8 @@ impl Repl {
                 match result {
                     CommandResult::Quit => {
                         self.editor.save_history(&self.config.repl.history_file);
+                        self.cmd_editor
+                            .save_history(&self.config.repl.command_history_file);
                         if let Some(handle) = self.agent_handle.take() {
                             handle.abort();
                         }
