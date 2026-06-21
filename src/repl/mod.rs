@@ -48,6 +48,7 @@ pub enum PopupMode {
     SkillGroups,
     FilePicker,
     TaskFilePicker,
+    Buffers,
 }
 
 enum CommandResult {
@@ -534,6 +535,15 @@ impl Repl {
                 }
                 self.render(stdout)?;
             }
+            return Ok(());
+        }
+        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('b') {
+            if self.popup.active {
+                self.popup.hide();
+            } else {
+                self.show_buffer_picker();
+            }
+            self.render(stdout)?;
             return Ok(());
         }
         if key.modifiers.contains(KeyModifiers::ALT) {
@@ -2648,13 +2658,26 @@ impl Repl {
                 if !self.waiting && !self.popup.items.is_empty() {
                     match self.popup_mode {
                         PopupMode::SkillGroups => {
-                            let idx = self.popup.cursor;
-                            self.set_skill_group(idx, stdout)?;
+                            if let Some(item) = self.popup.items.get(self.popup.cursor) {
+                                if let Some(idx) = item.id {
+                                    self.set_skill_group(idx, stdout)?;
+                                }
+                            }
                         }
                         PopupMode::FilePicker | PopupMode::TaskFilePicker => {
                             if let Some(item) = self.popup.items.get(self.popup.cursor) {
                                 let path = item.text.clone();
                                 self.load_file_to_buffer(&path, stdout)?;
+                            }
+                        }
+                        PopupMode::Buffers => {
+                            if let Some(item) = self.popup.items.get(self.popup.cursor) {
+                                if let Some(idx) = item.id {
+                                    if idx < self.buffers.len() {
+                                        self.active_buffer = idx;
+                                        self.scroll_to_bottom();
+                                    }
+                                }
                             }
                         }
                     }
@@ -3312,6 +3335,7 @@ impl Repl {
             .map(|f| PopupItem {
                 text: f.clone(),
                 is_active: false,
+                id: None,
             })
             .collect();
         self.popup_mode = PopupMode::FilePicker;
@@ -3327,10 +3351,35 @@ impl Repl {
             .map(|f| PopupItem {
                 text: f.clone(),
                 is_active: false,
+                id: None,
             })
             .collect();
         self.popup_mode = PopupMode::TaskFilePicker;
         self.popup.show("Task Files (.impl)", items, 0);
+    }
+
+    fn show_buffer_picker(&mut self) {
+        let items: Vec<PopupItem> = self
+            .buffers
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let is_active = i == self.active_buffer;
+                let name = if b.name().is_empty() {
+                    "Untitled".to_string()
+                } else {
+                    b.name().to_string()
+                };
+                let text = format!("[{}] {} ({} lines)", i + 1, name, b.len());
+                PopupItem {
+                    text,
+                    is_active,
+                    id: Some(i),
+                }
+            })
+            .collect();
+        self.popup_mode = PopupMode::Buffers;
+        self.popup.show("Buffers", items, self.active_buffer);
     }
 
     fn load_file_to_buffer(&mut self, path: &str, stdout: &mut io::Stdout) -> anyhow::Result<()> {

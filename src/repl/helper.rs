@@ -18,6 +18,7 @@ fn pad_to_width(s: &str, target_width: usize) -> String {
 pub struct PopupItem {
     pub text: String,
     pub is_active: bool,
+    pub id: Option<usize>,
 }
 pub struct Popup {
     pub active: bool,
@@ -345,6 +346,7 @@ impl super::Repl {
                 PopupItem {
                     text,
                     is_active: i == active_skill_group,
+                    id: Some(i),
                 }
             })
             .collect();
