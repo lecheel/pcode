@@ -14,18 +14,19 @@ fn pad_to_width(s: &str, target_width: usize) -> String {
     }
 }
 
+#[derive(Clone)]
 pub struct PopupItem {
     pub text: String,
     pub is_active: bool,
 }
-
 pub struct Popup {
     pub active: bool,
     pub cursor: usize,
     pub title: String,
     pub items: Vec<PopupItem>,
+    pub all_items: Vec<PopupItem>,
+    pub filter: String,
 }
-
 impl Popup {
     pub fn new() -> Self {
         Self {
@@ -33,21 +34,23 @@ impl Popup {
             cursor: 0,
             title: String::new(),
             items: Vec::new(),
+            all_items: Vec::new(),
+            filter: String::new(),
         }
     }
-
     pub fn show(&mut self, title: &str, items: Vec<PopupItem>, initial_cursor: usize) {
         let len = items.len();
         self.active = true;
         self.title = title.to_string();
+        self.all_items = items.clone();
         self.items = items;
         self.cursor = initial_cursor.min(len.saturating_sub(1));
+        self.filter = String::new();
     }
-
     pub fn hide(&mut self) {
         self.active = false;
+        self.filter.clear();
     }
-
     pub fn move_up(&mut self) {
         if self.items.is_empty() {
             return;
@@ -58,7 +61,6 @@ impl Popup {
             self.cursor = self.items.len() - 1;
         }
     }
-
     pub fn move_down(&mut self) {
         if self.items.is_empty() {
             return;
@@ -69,43 +71,66 @@ impl Popup {
             self.cursor = 0;
         }
     }
-
+    pub fn update_filter(&mut self, query: &str) {
+        self.filter = query.to_string();
+        if self.filter.is_empty() {
+            self.items = self.all_items.clone();
+        } else {
+            let q = self.filter.to_lowercase();
+            self.items = self
+                .all_items
+                .iter()
+                .filter(|item| item.text.to_lowercase().contains(&q))
+                .cloned()
+                .collect();
+        }
+        if self.cursor >= self.items.len() {
+            self.cursor = 0;
+        }
+    }
     pub fn render(&self, stdout: &mut io::Stdout, width: u16, height: u16) -> anyhow::Result<()> {
         if !self.active {
             return Ok(());
         }
-
         let num_items = self.items.len();
-        if num_items == 0 {
+        if num_items == 0 && self.filter.is_empty() {
             return Ok(());
         }
 
-        let rendered_lines: Vec<String> = self
-            .items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let is_selected = i == self.cursor;
-                let marker = if is_selected { ">" } else { " " };
-                let active_marker = if item.is_active { "*" } else { " " };
-                format!("{} {} {}", marker, active_marker, item.text)
-            })
-            .collect();
+        let rendered_lines: Vec<String> = if num_items == 0 {
+            vec![format!("   No matches for '{}'", self.filter)]
+        } else {
+            self.items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let is_selected = i == self.cursor;
+                    let marker = if is_selected { ">" } else { " " };
+                    let active_marker = if item.is_active { "*" } else { " " };
+                    format!("{} {} {}", marker, active_marker, item.text)
+                })
+                .collect()
+        };
 
         let term_width = width as usize;
         let preferred_width = (term_width * 90) / 100;
-
         let max_content_width = rendered_lines
             .iter()
             .map(|l| disp_width(l))
             .max()
             .unwrap_or(20)
             .max(20);
+        let filter_line = format!(" Filter: {} ", self.filter);
+        let max_filter_width = disp_width(&filter_line);
 
-        let inner_width = preferred_width.max(max_content_width).min(term_width);
+        let inner_width = preferred_width
+            .max(max_content_width)
+            .max(max_filter_width)
+            .min(term_width);
 
         let box_width = inner_width + 2;
-        let box_height = (num_items + 2) as u16;
+        let box_height = (num_items.max(1) + 3) as u16; // +3 for border top, filter line, border bottom
+
         let col = (width.saturating_sub(box_width as u16)) / 2;
         let row = (height.saturating_sub(box_height)) / 2;
 
@@ -120,7 +145,6 @@ impl Popup {
             " ".repeat(right_pad)
         );
         let top_border = format!("╭{}╮", title_line);
-
         queue!(
             stdout,
             cursor::MoveTo(col, row),
@@ -131,13 +155,31 @@ impl Popup {
             SetAttribute(Attribute::Reset)
         )?;
 
+        // Render filter line
+        queue!(stdout, cursor::MoveTo(col, row + 1))?;
+        let padded_filter = pad_to_width(&filter_line, inner_width);
+        queue!(
+            stdout,
+            SetForegroundColor(Color::Cyan),
+            SetAttribute(Attribute::Bold),
+            Print("│"),
+            SetAttribute(Attribute::Reset),
+            SetForegroundColor(Color::Yellow),
+            Print(&padded_filter),
+            style::ResetColor,
+            SetForegroundColor(Color::Cyan),
+            SetAttribute(Attribute::Bold),
+            Print("│"),
+            style::ResetColor,
+            SetAttribute(Attribute::Reset)
+        )?;
+
+        // Render items
         for (i, line) in rendered_lines.iter().enumerate() {
-            let y = row + 1 + i as u16;
+            let y = row + 2 + i as u16;
             queue!(stdout, cursor::MoveTo(col, y))?;
-            let is_selected = i == self.cursor;
-
+            let is_selected = i == self.cursor && num_items > 0;
             let padded = pad_to_width(line, inner_width);
-
             let fg = if is_selected {
                 Color::Black
             } else {
@@ -148,7 +190,6 @@ impl Popup {
             } else {
                 Color::DarkGrey
             };
-
             queue!(
                 stdout,
                 SetForegroundColor(Color::Cyan),
@@ -168,7 +209,7 @@ impl Popup {
         }
 
         let bottom_border = format!("╰{}╯", "─".repeat(inner_width));
-        let y = row + 1 + num_items as u16;
+        let y = row + 2 + num_items.max(1) as u16;
         queue!(
             stdout,
             cursor::MoveTo(col, y),
@@ -178,6 +219,10 @@ impl Popup {
             style::ResetColor,
             SetAttribute(Attribute::Reset)
         )?;
+
+        // Position cursor at the end of the filter text
+        let cursor_x = col + 1 + disp_width(&filter_line) as u16;
+        queue!(stdout, cursor::Show, cursor::MoveTo(cursor_x, row + 1))?;
 
         Ok(())
     }

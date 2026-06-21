@@ -2257,26 +2257,20 @@ impl Repl {
     }
     fn handle_popup_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down | KeyCode::Tab => {
                 self.popup.move_down();
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up | KeyCode::BackTab => {
                 self.popup.move_up();
             }
             KeyCode::Enter => {
-                if !self.waiting {
+                if !self.waiting && !self.popup.items.is_empty() {
                     match self.popup_mode {
                         PopupMode::SkillGroups => {
                             let idx = self.popup.cursor;
                             self.set_skill_group(idx, stdout)?;
                         }
-                        PopupMode::FilePicker => {
-                            if let Some(item) = self.popup.items.get(self.popup.cursor) {
-                                let path = item.text.clone();
-                                self.load_file_to_buffer(&path, stdout)?;
-                            }
-                        }
-                        PopupMode::TaskFilePicker => {
+                        PopupMode::FilePicker | PopupMode::TaskFilePicker => {
                             if let Some(item) = self.popup.items.get(self.popup.cursor) {
                                 let path = item.text.clone();
                                 self.load_file_to_buffer(&path, stdout)?;
@@ -2286,8 +2280,27 @@ impl Repl {
                 }
                 self.popup.hide();
             }
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc => {
                 self.popup.hide();
+            }
+            KeyCode::Char('j') if matches!(self.popup_mode, PopupMode::SkillGroups) => {
+                self.popup.move_down();
+            }
+            KeyCode::Char('k') if matches!(self.popup_mode, PopupMode::SkillGroups) => {
+                self.popup.move_up();
+            }
+            KeyCode::Char('q') if matches!(self.popup_mode, PopupMode::SkillGroups) => {
+                self.popup.hide();
+            }
+            KeyCode::Char(c) => {
+                self.popup.filter.push(c);
+                let f = self.popup.filter.clone();
+                self.popup.update_filter(&f);
+            }
+            KeyCode::Backspace => {
+                self.popup.filter.pop();
+                let f = self.popup.filter.clone();
+                self.popup.update_filter(&f);
             }
             _ => {}
         }
