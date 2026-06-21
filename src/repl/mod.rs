@@ -1,3 +1,5 @@
+// src/repl/mod.rs
+
 pub mod buffer;
 pub mod editor;
 pub mod helper;
@@ -18,11 +20,13 @@ use helper::{Popup, PopupItem};
 use mode::Mode;
 use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
+
 const COMMAND_LIST: &[&str] = &[
     "quit", "q", "exit", "help", "h", "?", "save", "load", "sessions", "delete", "rm", "reset",
     "config", "tools", "debug", "status", "cls", "clear", "skills", "rg", "grep", "fd", "find",
-    "ls", "cancel", "bn", "bp", "bd", "open", "e", "saveas", "write", "workflow", "gs",
+    "ls", "cancel", "bn", "bp", "bd", "open", "e", "saveas", "write", "workflow", "gs", "sed",
 ];
+
 struct TerminalGuard;
 impl TerminalGuard {
     fn init(stdout: &mut io::Stdout) -> anyhow::Result<Self> {
@@ -38,17 +42,20 @@ impl Drop for TerminalGuard {
         let _ = terminal::disable_raw_mode();
     }
 }
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum PopupMode {
     SkillGroups,
     FilePicker,
     TaskFilePicker,
 }
+
 enum CommandResult {
     Continue,
     Quit,
     ClearScreen,
 }
+
 pub struct Repl {
     mode: Mode,
     buffers: Vec<ResponseBuffer>,
@@ -80,7 +87,9 @@ pub struct Repl {
     stash_pop_target: Option<String>,
     cached_git_info: String,
 }
+
 const INPUT_AREA_ROWS: usize = 2;
+
 impl Repl {
     pub fn new(agent: PatchAgent, config: AppConfig) -> Self {
         let (width, height) = terminal::size().unwrap_or((80, 24));
@@ -119,12 +128,15 @@ impl Repl {
             cached_git_info: String::new(),
         }
     }
+
     fn buffer(&self) -> &ResponseBuffer {
         &self.buffers[self.active_buffer]
     }
+
     fn buffer_mut(&mut self) -> &mut ResponseBuffer {
         &mut self.buffers[self.active_buffer]
     }
+
     fn llm_buffer_idx(&mut self) -> usize {
         if let Some(idx) = self.llm_buffer_idx {
             if idx < self.buffers.len() {
@@ -136,6 +148,7 @@ impl Repl {
         self.llm_buffer_idx = Some(idx);
         idx
     }
+
     fn console_buffer_idx(&mut self) -> usize {
         if let Some(idx) = self.console_buffer_idx {
             if idx < self.buffers.len() {
@@ -147,57 +160,75 @@ impl Repl {
         self.console_buffer_idx = Some(idx);
         idx
     }
+
     fn push_line(&mut self, content: impl Into<String>, style: LineStyle) {
         self.buffer_mut().push(BufferLine::new(content, style));
     }
+
     fn push_command_info(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.console_buffer_idx();
         self.buffers[idx].push(BufferLine::new(content, style));
         self.active_buffer = idx;
     }
+
+    // Logs to console without switching the active view
+    fn push_info(&mut self, content: impl Into<String>, style: LineStyle) {
+        let idx = self.console_buffer_idx();
+        self.buffers[idx].push(BufferLine::new(content, style));
+    }
+
     fn push_llm_line(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.llm_buffer_idx();
         self.buffers[idx].push(BufferLine::new(content, style));
     }
+
     fn scroll_llm_to_bottom(&mut self) {
         let idx = self.llm_buffer_idx();
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffers[idx].scroll_to_bottom(h, w);
     }
+
     fn scroll_to_bottom(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().scroll_to_bottom(h, w);
     }
+
     fn ensure_cursor_visible(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().ensure_cursor_visible(h, w);
     }
+
     fn move_bottom(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().move_bottom(h, w);
     }
+
     fn half_page_down(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().half_page_down(h, w);
     }
+
     fn half_page_up(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().half_page_up(h, w);
     }
+
     fn scroll_to_bottom_view(&mut self) {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().scroll_to_bottom_view(h, w);
     }
+
     fn set_cursor(&mut self, line: usize, col: usize) {
         self.buffer_mut().set_cursor(line, col);
     }
+
     fn switch_buffer(&mut self, direction: i32) {
         if self.buffers.len() > 1 {
             if direction > 0 {
@@ -209,14 +240,15 @@ impl Repl {
             }
             self.scroll_to_bottom();
         } else {
-            self.push_command_info("  Only 1 buffer", LineStyle::Dim);
+            self.push_info("  Only 1 buffer", LineStyle::Dim);
             self.scroll_to_bottom();
         }
     }
+
     fn close_buffer(&mut self) {
         if self.buffers.len() <= 1 {
             self.buffer_mut().clear();
-            self.push_command_info(
+            self.push_info(
                 "  Cannot close last buffer, cleared instead.",
                 LineStyle::Dim,
             );
@@ -229,7 +261,7 @@ impl Repl {
         // Prevent closing primary buffers (Chat/Console), just clear them instead
         if self.llm_buffer_idx == Some(closed_idx) || self.console_buffer_idx == Some(closed_idx) {
             self.buffers[closed_idx].clear();
-            self.push_command_info(
+            self.push_info(
                 "  Cannot close primary buffers (Chat/Console). Cleared instead.",
                 LineStyle::Dim,
             );
@@ -256,15 +288,19 @@ impl Repl {
         }
         self.scroll_to_bottom();
     }
+
     fn response_area_height(&self) -> usize {
         self.height as usize - INPUT_AREA_ROWS
     }
+
     fn agent_ref(&self) -> &PatchAgent {
         self.agent.as_ref().expect("agent missing")
     }
+
     fn agent_mut(&mut self) -> &mut PatchAgent {
         self.agent.as_mut().expect("agent missing")
     }
+
     fn active_skill_group(&self) -> usize {
         if self.agent.is_some() {
             self.agent_ref().active_skill_group
@@ -272,6 +308,7 @@ impl Repl {
             self.cached_skill_group
         }
     }
+
     pub async fn run(&mut self, initial_prompt: Option<String>) -> anyhow::Result<()> {
         let mut stdout = io::stdout();
         let _guard = TerminalGuard::init(&mut stdout)?;
@@ -283,6 +320,7 @@ impl Repl {
         }
         self.event_loop(&mut stdout).await
     }
+
     fn push_welcome(&mut self) {
         self.push_llm_line("pcode — vim-modal patch REPL", LineStyle::Info);
         let idx = self.llm_buffer_idx();
@@ -305,7 +343,6 @@ impl Repl {
             "  yy               → Yank line to clipboard",
             LineStyle::Dim,
         );
-
         self.push_llm_line("  dd (5dd)         → Delete line (5 lines)", LineStyle::Dim);
         self.push_llm_line("  u                → Undo line deletion", LineStyle::Dim);
         self.push_llm_line("  o                → Open via $EDITOR", LineStyle::Dim);
@@ -318,6 +355,7 @@ impl Repl {
         );
         self.buffers[idx].push_blank();
     }
+
     async fn event_loop(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let mut spinner_idx: usize = 0;
@@ -461,10 +499,11 @@ impl Repl {
             }
         }
     }
+
     fn handle_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.waiting {
-                self.push_command_info(
+                self.push_info(
                     "  ⏳ Still processing… press :q to force quit or F12 to abort",
                     LineStyle::Dim,
                 );
@@ -543,7 +582,7 @@ impl Repl {
                 if let Some(tx) = self.cancel_tx.take() {
                     let _ = tx.send(());
                 }
-                self.push_command_info("  ⛔ Cancelling agent task...", LineStyle::Error);
+                self.push_info("  ⛔ Cancelling agent task...", LineStyle::Error);
                 self.scroll_to_bottom();
                 self.render(stdout)?;
             }
@@ -579,7 +618,7 @@ impl Repl {
                 self.cached_skill_group = idx;
                 self.popup.hide();
                 let group = &SKILL_GROUPS[idx];
-                self.push_command_info(
+                self.push_info(
                     format!("  {} {} — {}", group.emoji, group.name, group.description),
                     LineStyle::ToolResult,
                 );
@@ -623,6 +662,7 @@ impl Repl {
         }
         Ok(())
     }
+
     fn handle_normal_repeat(
         &mut self,
         key: KeyEvent,
@@ -641,6 +681,7 @@ impl Repl {
         }
         self.render(stdout)
     }
+
     fn handle_normal_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if let Some(target) = self.stash_pop_target.take() {
             match key.code {
@@ -692,13 +733,11 @@ impl Repl {
             }
         }
 
-        // Enter handler for rg buffer (supports both grouped and single-line formats)
         if key.code == KeyCode::Enter && self.buffer().name() == "rg" {
             let cursor_line = self.buffer().cursor_line();
             if let Some(line) = self.buffer().lines().get(cursor_line) {
                 let content = line.content();
 
-                // Try to parse single-line format (file:line:content)
                 if let Some(colon1) = content.find(':') {
                     if let Some(colon2) = content[colon1 + 1..].find(':') {
                         let file = content[..colon1].to_string();
@@ -720,11 +759,9 @@ impl Repl {
                     }
                 }
 
-                // Try to parse grouped format (line:content)
                 if let Some(colon1) = content.find(':') {
                     let line_num_str = &content[..colon1];
                     if let Ok(line_num) = line_num_str.parse::<usize>() {
-                        // Look upwards for the file name
                         let mut file_to_open = None;
                         for i in (0..cursor_line).rev() {
                             if let Some(prev_line) = self.buffer().lines().get(i) {
@@ -732,13 +769,11 @@ impl Repl {
                                 if prev_content.is_empty() {
                                     continue;
                                 }
-                                // If it starts with a digit and has a colon, it's another match line
                                 if prev_content.starts_with(|c: char| c.is_ascii_digit())
                                     && prev_content.contains(':')
                                 {
                                     continue;
                                 }
-                                // Otherwise, it's the file header
                                 file_to_open = Some(prev_content.clone());
                                 break;
                             }
@@ -872,6 +907,7 @@ impl Repl {
                 _ => {}
             }
         }
+
         let amount = self.count.unwrap_or(1);
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -886,7 +922,17 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
+
         match key.code {
+            KeyCode::Char('w') => {
+                if self.buffer().name() == "SedChanges" {
+                    self.apply_sed_changes(stdout)?;
+                    self.count = None;
+                    self.pending = None;
+                    return Ok(());
+                }
+                self.count = None;
+            }
             KeyCode::Char('i') => {
                 self.mode = Mode::Insert;
                 self.count = None;
@@ -904,15 +950,6 @@ impl Repl {
             KeyCode::Char('I') => {
                 self.mode = Mode::Insert;
                 self.editor.move_home();
-                self.count = None;
-            }
-            KeyCode::Char('w') => {
-                if self.buffer().name() == "SedChanges" {
-                    self.apply_sed_changes(stdout)?;
-                    self.count = None;
-                    self.pending = None;
-                    return Ok(());
-                }
                 self.count = None;
             }
             KeyCode::Char('o') => {
@@ -957,7 +994,7 @@ impl Repl {
                             }
                         }
                         Err(e) => {
-                            self.push_command_info(
+                            self.push_info(
                                 format!("  ❌ Failed to open editor: {}", e),
                                 LineStyle::Error,
                             );
@@ -1139,13 +1176,13 @@ impl Repl {
                             .and_then(|mut cb| cb.set_text(line.content().clone()))
                         {
                             Ok(_) => {
-                                self.push_command_info(
+                                self.push_info(
                                     "  📋 Yanked line to clipboard".to_string(),
                                     LineStyle::Dim,
                                 );
                             }
                             Err(e) => {
-                                self.push_command_info(
+                                self.push_info(
                                     format!("  ❌ Clipboard error: {}", e),
                                     LineStyle::Error,
                                 );
@@ -1176,7 +1213,7 @@ impl Repl {
                                 .get(block_start)
                                 .map(|l| l.content())
                                 .unwrap_or_default();
-                            if content.starts_with("📄 ") {
+                            if content.starts_with("@@ ") {
                                 break;
                             }
                             block_start -= 1;
@@ -1187,7 +1224,7 @@ impl Repl {
                             .get(block_start)
                             .map(|l| l.content())
                             .unwrap_or_default();
-                        if content.starts_with("📄 ") && cursor_line <= block_start + 3 {
+                        if content.starts_with("@@ ") && cursor_line <= block_start + 3 {
                             let lines_len = self.buffer().len();
                             let end_line = (block_start + 4).min(lines_len);
                             self.buffer_mut().remove_lines(block_start, end_line);
@@ -1200,7 +1237,7 @@ impl Repl {
                             };
                             self.set_cursor(new_cursor, 0);
                             self.ensure_cursor_visible();
-                            self.push_command_info("  🗑️  Discarded change", LineStyle::Dim);
+                            self.push_info("  🗑️  Discarded change", LineStyle::Dim);
                             self.scroll_to_bottom_view();
                         }
                         self.pending = None;
@@ -1224,7 +1261,7 @@ impl Repl {
                         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text))
                         {
                             Ok(_) => {}
-                            Err(e) => self.push_command_info(
+                            Err(e) => self.push_info(
                                 format!("  ❌ Clipboard error: {}", e),
                                 LineStyle::Error,
                             ),
@@ -1238,7 +1275,7 @@ impl Repl {
                         };
                         self.set_cursor(new_cursor, 0);
                         self.ensure_cursor_visible();
-                        self.push_command_info(
+                        self.push_info(
                             format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
                             LineStyle::Dim,
                         );
@@ -1254,9 +1291,9 @@ impl Repl {
             }
             KeyCode::Char('u') => {
                 if self.buffer_mut().undo() {
-                    self.push_command_info("  ↩️  Undone line deletion", LineStyle::Dim);
+                    self.push_info("  ↩️  Undone line deletion", LineStyle::Dim);
                 } else {
-                    self.push_command_info("  Nothing to undo", LineStyle::Dim);
+                    self.push_info("  Nothing to undo", LineStyle::Dim);
                 }
                 self.scroll_to_bottom_view();
                 self.ensure_cursor_visible();
@@ -1287,6 +1324,7 @@ impl Repl {
         self.pending = None;
         self.render(stdout)
     }
+
     fn handle_insert_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -1350,6 +1388,7 @@ impl Repl {
         }
         self.render_spinner_only(stdout)
     }
+
     fn handle_search_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -1395,6 +1434,7 @@ impl Repl {
             self.render(stdout)
         }
     }
+
     fn update_search(&mut self) {
         let query = self.cmd_editor.content().to_string();
         if query.is_empty() {
@@ -1433,6 +1473,7 @@ impl Repl {
             }
         }
     }
+
     fn submit_input(&mut self, stdout: &mut io::Stdout, input: String) -> anyhow::Result<()> {
         if input.trim().is_empty() {
             self.mode = Mode::Normal;
@@ -1518,6 +1559,7 @@ impl Repl {
         self.agent_handle = Some(handle);
         Ok(())
     }
+
     fn execute_command(
         &mut self,
         cmd: &str,
@@ -1557,14 +1599,12 @@ impl Repl {
                     return Ok(CommandResult::Continue);
                 }
             }
-
             "sed" => {
                 let arg = parts.get(1).copied().unwrap_or("");
                 if arg.is_empty() {
                     self.push_command_info("  Usage: :sed <find> <replace> [path]", LineStyle::Dim);
                 } else {
                     let (find, replace, path) = if arg.starts_with('/') {
-                        // Format: /find/replace/ [path]
                         let parts: Vec<&str> = arg[1..].splitn(2, '/').collect();
                         if parts.len() == 2 {
                             let find = parts[0].to_string();
@@ -1581,7 +1621,6 @@ impl Repl {
                             (String::new(), String::new(), ".".to_string())
                         }
                     } else if arg.contains('|') {
-                        // Format: find|replace [path]
                         let parts: Vec<&str> = arg.splitn(2, '|').collect();
                         let find = parts[0].to_string();
                         if parts.len() == 2 {
@@ -1597,7 +1636,6 @@ impl Repl {
                             (find, String::new(), ".".to_string())
                         }
                     } else {
-                        // Format: find replace [path]
                         let parts: Vec<&str> = arg.splitn(3, ' ').collect();
                         if parts.len() >= 2 {
                             (
@@ -1845,12 +1883,11 @@ impl Repl {
                             return Ok(CommandResult::Continue);
                         }
                     }
-                    // FIX: clone each String instead of borrowing a temporary
                     let content = self
                         .buffer()
                         .lines()
                         .iter()
-                        .map(|l| l.content().clone()) // <-- changed from .as_str()
+                        .map(|l| l.content().clone())
                         .collect::<Vec<String>>()
                         .join("\n");
                     match std::fs::write(&resolved, format!("{}\n", content)) {
@@ -2139,7 +2176,6 @@ impl Repl {
                                     self.buffer_mut().push_blank();
                                     continue;
                                 }
-                                // Check if it's a grep fallback format (file:line:content)
                                 if let Some(colon1) = line.find(':') {
                                     if let Some(colon2) = line[colon1 + 1..].find(':') {
                                         let file = &line[..colon1];
@@ -2161,9 +2197,7 @@ impl Repl {
                                     }
                                 }
 
-                                // rg --heading format
                                 if !is_grep {
-                                    // Check if it's a line number match (e.g. \"12:content\")
                                     if let Some(colon) = line.find(':') {
                                         let line_num_str = &line[..colon];
                                         if let Ok(line_num) = line_num_str.parse::<usize>() {
@@ -2178,7 +2212,6 @@ impl Repl {
                                             continue;
                                         }
                                     }
-                                    // Otherwise, it's a file header
                                     self.buffer_mut().push(BufferLine::new(
                                         line.to_string(),
                                         LineStyle::ToolResult,
@@ -2331,6 +2364,107 @@ impl Repl {
         self.scroll_to_bottom();
         Ok(CommandResult::Continue)
     }
+
+    fn apply_sed_changes(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let lines = self.buffer().lines();
+        let mut changes_to_apply: std::collections::HashMap<String, Vec<(usize, String)>> =
+            std::collections::HashMap::new();
+
+        let mut i = 0;
+        while i < lines.len() {
+            let content = lines[i].content();
+            if content.starts_with("@@ ") {
+                let parts: Vec<&str> = content[3..].splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    let file = parts[0].to_string();
+                    let line_num = parts[1].parse::<usize>().unwrap_or(0);
+
+                    if i + 2 < lines.len() {
+                        let old_line_content = lines[i + 1].content();
+                        let new_line_content = lines[i + 2].content();
+
+                        if old_line_content.starts_with("- ") && new_line_content.starts_with("+ ")
+                        {
+                            let new_text = new_line_content[2..].to_string();
+                            changes_to_apply
+                                .entry(file)
+                                .or_default()
+                                .push((line_num, new_text));
+                            i += 3;
+                            if i < lines.len() && lines[i].content().is_empty() {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let mut applied_count: usize = 0;
+        let mut failed_count: usize = 0;
+
+        for (file, mut changes) in changes_to_apply {
+            changes.sort_by(|a, b| b.0.cmp(&a.0));
+
+            let root = std::path::PathBuf::from(&self.config.tools.project_root);
+            let resolved = if std::path::Path::new(&file).is_absolute() {
+                std::path::PathBuf::from(&file)
+            } else {
+                root.join(&file)
+            };
+
+            if let Ok(content) = std::fs::read_to_string(&resolved) {
+                let has_trailing_newline = content.ends_with('\n');
+                let mut lines_vec: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                let mut modified = false;
+
+                for (line_num, new_text) in &changes {
+                    let idx = line_num.saturating_sub(1);
+                    if idx < lines_vec.len() {
+                        if lines_vec[idx] != *new_text {
+                            lines_vec[idx] = new_text.clone();
+                            modified = true;
+                        }
+                        applied_count += 1;
+                    } else {
+                        failed_count += 1;
+                    }
+                }
+
+                if modified {
+                    let mut new_content = lines_vec.join("\n");
+                    if has_trailing_newline {
+                        new_content.push('\n');
+                    }
+                    if std::fs::write(&resolved, new_content).is_err() {
+                        failed_count += changes.len();
+                        applied_count = applied_count.saturating_sub(changes.len());
+                    }
+                }
+            } else {
+                failed_count += changes.len();
+            }
+        }
+
+        self.push_info(
+            format!(
+                "  ✅ Applied {} changes. {} failed.",
+                applied_count, failed_count
+            ),
+            if failed_count > 0 {
+                LineStyle::Error
+            } else {
+                LineStyle::ToolResult
+            },
+        );
+        self.close_buffer();
+        self.scroll_to_bottom();
+        self.render(stdout)?;
+        Ok(())
+    }
+
     fn push_help(&mut self) {
         self.push_command_info("  pcode — Vim-Modal Commands", LineStyle::Info);
         self.buffer_mut().push_blank();
@@ -2405,6 +2539,7 @@ impl Repl {
             self.push_command_info(format!("  {:<22} {}", key, desc), LineStyle::Plain);
         }
     }
+
     fn handle_command_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -2470,6 +2605,7 @@ impl Repl {
             self.render_spinner_only(stdout)
         }
     }
+
     fn handle_popup_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         match key.code {
             KeyCode::Down | KeyCode::Tab => {
@@ -2521,6 +2657,7 @@ impl Repl {
         }
         self.render(stdout)
     }
+
     fn render_spinner_only(&self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let status_y = self.height - 2;
         queue!(stdout, cursor::MoveTo(0, status_y))?;
@@ -2628,6 +2765,7 @@ impl Repl {
         stdout.flush()?;
         Ok(())
     }
+
     fn render(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
         let gutter_w = self.gutter_width();
@@ -2779,6 +2917,7 @@ impl Repl {
         stdout.flush()?;
         Ok(())
     }
+
     fn term_width(&self) -> usize {
         if self.width > 0 {
             self.width as usize
@@ -2786,6 +2925,7 @@ impl Repl {
             120
         }
     }
+
     fn get_git_gutter(&self) -> Option<Vec<char>> {
         let buffer_name = self.buffer().name();
         if buffer_name == "Chat"
@@ -2879,6 +3019,7 @@ impl Repl {
         }
         Some(gutter)
     }
+
     fn get_git_gutter_lines(&self) -> Option<Vec<usize>> {
         let gutter = self.get_git_gutter()?;
         let lines: Vec<usize> = gutter
@@ -2888,6 +3029,7 @@ impl Repl {
             .collect();
         Some(lines)
     }
+
     fn gutter_width(&self) -> usize {
         let lines = self.buffer().len();
         let base = if lines < 10 {
@@ -2903,9 +3045,11 @@ impl Repl {
         };
         base + 1 // +1 for git gutter
     }
+
     fn content_width(&self) -> usize {
         self.term_width().saturating_sub(self.gutter_width() + 1)
     }
+
     fn get_timestamp() -> String {
         let now = std::time::SystemTime::now();
         let duration = now
@@ -2917,6 +3061,7 @@ impl Repl {
         let secs = secs % 60;
         format!("{:02}:{:02}:{:02}", hours, mins, secs)
     }
+
     fn show_git_status(
         &mut self,
         stdout: &mut io::Stdout,
@@ -3052,7 +3197,6 @@ impl Repl {
         self.push_line("", LineStyle::Plain);
 
         self.push_line("  ────────────────────────────────────────", LineStyle::Dim);
-        // self.push_line("  [c] Stage tracked and commit with LLM", LineStyle::Info);
         self.push_line(
             "  [s] Toggle staged  [Enter] Open file  [z] stash [q] Close",
             LineStyle::Dim,
@@ -3079,6 +3223,7 @@ impl Repl {
         self.render(stdout)?;
         Ok(())
     }
+
     fn show_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
         let files = list_project_files(&root);
@@ -3092,6 +3237,7 @@ impl Repl {
         self.popup_mode = PopupMode::FilePicker;
         self.popup.show("Open File", items, 0);
     }
+
     fn show_task_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
         let impl_dir = root.join(".impl");
@@ -3106,6 +3252,7 @@ impl Repl {
         self.popup_mode = PopupMode::TaskFilePicker;
         self.popup.show("Task Files (.impl)", items, 0);
     }
+
     fn load_file_to_buffer(&mut self, path: &str, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
         let raw_path = std::path::Path::new(path);
@@ -3153,7 +3300,6 @@ impl Repl {
                 self.buffers.push(ResponseBuffer::with_name(path));
                 self.active_buffer = new_buf_idx;
 
-                // Push "Opened" message to Console, but DON'T switch view away from the file
                 let c_idx = self.console_buffer_idx();
                 self.buffers[c_idx].push(BufferLine::new(
                     format!("  📄 Opened: {}", path),
@@ -3173,106 +3319,8 @@ impl Repl {
         }
         self.render(stdout)
     }
-    fn apply_sed_changes(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        let lines = self.buffer().lines();
-        let mut changes_to_apply: std::collections::HashMap<String, Vec<(usize, String)>> =
-            std::collections::HashMap::new();
-
-        let mut i = 0;
-        while i < lines.len() {
-            let content = lines[i].content();
-            if content.starts_with("@@ ") {
-                let parts: Vec<&str> = content[3..].splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    let file = parts[0].to_string();
-                    let line_num = parts[1].parse::<usize>().unwrap_or(0);
-
-                    if i + 2 < lines.len() {
-                        let old_line_content = lines[i + 1].content();
-                        let new_line_content = lines[i + 2].content();
-
-                        if old_line_content.starts_with("- ") && new_line_content.starts_with("+ ")
-                        {
-                            let new_text = new_line_content[2..].to_string();
-                            changes_to_apply
-                                .entry(file)
-                                .or_default()
-                                .push((line_num, new_text));
-                            i += 3;
-                            if i < lines.len() && lines[i].content().is_empty() {
-                                i += 1;
-                            }
-                            continue;
-                        }
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        let mut applied_count: usize = 0;
-        let mut failed_count: usize = 0;
-
-        for (file, mut changes) in changes_to_apply {
-            changes.sort_by(|a, b| b.0.cmp(&a.0));
-
-            let root = std::path::PathBuf::from(&self.config.tools.project_root);
-            let resolved = if std::path::Path::new(&file).is_absolute() {
-                std::path::PathBuf::from(&file)
-            } else {
-                root.join(&file)
-            };
-
-            if let Ok(content) = std::fs::read_to_string(&resolved) {
-                let has_trailing_newline = content.ends_with('\n');
-                let mut lines_vec: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-                let mut modified = false;
-
-                for (line_num, new_text) in &changes {
-                    let idx = line_num.saturating_sub(1);
-                    if idx < lines_vec.len() {
-                        if lines_vec[idx] != *new_text {
-                            lines_vec[idx] = new_text.clone();
-                            modified = true;
-                        }
-                        applied_count += 1;
-                    } else {
-                        failed_count += 1;
-                    }
-                }
-
-                if modified {
-                    let mut new_content = lines_vec.join("\n");
-                    if has_trailing_newline {
-                        new_content.push('\n');
-                    }
-                    if std::fs::write(&resolved, new_content).is_err() {
-                        failed_count += changes.len();
-                        applied_count = applied_count.saturating_sub(changes.len());
-                    }
-                }
-            } else {
-                failed_count += changes.len();
-            }
-        }
-
-        self.push_command_info(
-            format!(
-                "  ✅ Applied {} changes. {} failed.",
-                applied_count, failed_count
-            ),
-            if failed_count > 0 {
-                LineStyle::Error
-            } else {
-                LineStyle::ToolResult
-            },
-        );
-        self.close_buffer();
-        self.scroll_to_bottom();
-        self.render(stdout)?;
-        Ok(())
-    }
 }
+
 fn list_project_files(root: &std::path::Path) -> Vec<String> {
     let mut files = Vec::new();
     fn walk(dir: &std::path::Path, base: &std::path::Path, files: &mut Vec<String>, depth: usize) {
@@ -3298,6 +3346,7 @@ fn list_project_files(root: &std::path::Path) -> Vec<String> {
     files.sort();
     files
 }
+
 fn highlight_search(content: &str, query: &str) -> String {
     let mut result = String::new();
     let mut last_end = 0;
@@ -3314,6 +3363,7 @@ fn highlight_search(content: &str, query: &str) -> String {
     result.push_str(&content[last_end..]);
     result
 }
+
 fn list_impl_files(root: &std::path::Path, impl_dir: &std::path::Path) -> Vec<String> {
     let mut files = Vec::new();
     fn walk(dir: &std::path::Path, root: &std::path::Path, files: &mut Vec<String>) {
