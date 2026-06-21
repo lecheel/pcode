@@ -352,6 +352,7 @@ impl Repl {
         self.push_llm_line("  u                → Undo line deletion", LineStyle::Dim);
         self.push_llm_line("  o                → Open via $EDITOR", LineStyle::Dim);
         self.push_llm_line("  l / L            → hunkNext/hunkPrev", LineStyle::Dim);
+        self.push_llm_line("  Alt-d            → Delete line", LineStyle::Dim);
         self.push_llm_line("  Alt-w            → Write buffer", LineStyle::Dim);
         self.push_llm_line("  Alt-x            → Close buffer", LineStyle::Dim);
         self.push_llm_line(
@@ -564,6 +565,16 @@ impl Repl {
                         self.execute_command("write", stdout)?;
                     }
                     self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('d') => {
+                    if !self.waiting {
+                        let amount = self.count.unwrap_or(1);
+                        self.do_dd(amount)?;
+                        self.count = None;
+                        self.pending = None;
+                        self.render(stdout)?;
+                    }
                     return Ok(());
                 }
                 KeyCode::Char('x') => {
@@ -1209,85 +1220,8 @@ impl Repl {
 
             KeyCode::Char('d') => {
                 if self.pending == Some('d') {
-                    let buffer_name = self.buffer().name().to_string();
-                    if buffer_name == "SedChanges" {
-                        let cursor_line = self.buffer().cursor_line();
-                        let mut block_start = cursor_line;
-                        while block_start > 0 {
-                            let content = self
-                                .buffer()
-                                .lines()
-                                .get(block_start)
-                                .map(|l| l.content())
-                                .unwrap_or_default();
-                            if content.starts_with("@@ ") {
-                                break;
-                            }
-                            block_start -= 1;
-                        }
-                        let content = self
-                            .buffer()
-                            .lines()
-                            .get(block_start)
-                            .map(|l| l.content())
-                            .unwrap_or_default();
-                        if content.starts_with("@@ ") && cursor_line <= block_start + 3 {
-                            let lines_len = self.buffer().len();
-                            let end_line = (block_start + 4).min(lines_len);
-                            self.buffer_mut().remove_lines(block_start, end_line);
-
-                            let new_len = self.buffer().len();
-                            let new_cursor = if new_len == 0 {
-                                0
-                            } else {
-                                block_start.min(new_len - 1)
-                            };
-                            self.set_cursor(new_cursor, 0);
-                            self.ensure_cursor_visible();
-                            self.push_info("  🗑️  Discarded change", LineStyle::Dim);
-                            self.scroll_to_bottom_view();
-                        }
-                        self.pending = None;
-                        self.count = None;
-                        self.render(stdout)?;
-                        return Ok(());
-                    }
-
-                    let cursor_line = self.buffer().cursor_line();
-                    let lines_len = self.buffer().len();
-                    if lines_len > 0 {
-                        let end_line = (cursor_line + amount).min(lines_len);
-                        let mut yanked_text = String::new();
-
-                        for i in cursor_line..end_line {
-                            if let Some(line) = self.buffer().lines().get(i) {
-                                yanked_text.push_str(&line.content());
-                                yanked_text.push('\n');
-                            }
-                        }
-                        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text))
-                        {
-                            Ok(_) => {}
-                            Err(e) => self.push_info(
-                                format!("  ❌ Clipboard error: {}", e),
-                                LineStyle::Error,
-                            ),
-                        }
-                        self.buffer_mut().remove_lines(cursor_line, end_line);
-                        let new_len = self.buffer().len();
-                        let new_cursor = if new_len == 0 {
-                            0
-                        } else {
-                            cursor_line.min(new_len - 1)
-                        };
-                        self.set_cursor(new_cursor, 0);
-                        self.ensure_cursor_visible();
-                        self.push_info(
-                            format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
-                            LineStyle::Dim,
-                        );
-                        self.scroll_to_bottom_view();
-                    }
+                    let amount = self.count.unwrap_or(1);
+                    self.do_dd(amount)?;
                     self.pending = None;
                     self.count = None;
                 } else {
@@ -1296,6 +1230,7 @@ impl Repl {
                     return Ok(());
                 }
             }
+
             KeyCode::Char('u') => {
                 if self.buffer_mut().undo() {
                     self.push_info("  ↩️  Undone line deletion", LineStyle::Dim);
@@ -2469,6 +2404,83 @@ impl Repl {
         self.close_buffer();
         self.scroll_to_bottom();
         self.render(stdout)?;
+        Ok(())
+    }
+
+    fn do_dd(&mut self, amount: usize) -> anyhow::Result<()> {
+        let buffer_name = self.buffer().name().to_string();
+        if buffer_name == "SedChanges" {
+            let cursor_line = self.buffer().cursor_line();
+            let mut block_start = cursor_line;
+            while block_start > 0 {
+                let content = self
+                    .buffer()
+                    .lines()
+                    .get(block_start)
+                    .map(|l| l.content())
+                    .unwrap_or_default();
+                if content.starts_with("@@ ") {
+                    break;
+                }
+                block_start -= 1;
+            }
+            let content = self
+                .buffer()
+                .lines()
+                .get(block_start)
+                .map(|l| l.content())
+                .unwrap_or_default();
+            if content.starts_with("@@ ") && cursor_line <= block_start + 3 {
+                let lines_len = self.buffer().len();
+                let end_line = (block_start + 4).min(lines_len);
+                self.buffer_mut().remove_lines(block_start, end_line);
+
+                let new_len = self.buffer().len();
+                let new_cursor = if new_len == 0 {
+                    0
+                } else {
+                    block_start.min(new_len - 1)
+                };
+                self.set_cursor(new_cursor, 0);
+                self.ensure_cursor_visible();
+                self.push_info("  🗑️  Discarded change", LineStyle::Dim);
+                self.scroll_to_bottom_view();
+            }
+        } else {
+            let cursor_line = self.buffer().cursor_line();
+            let lines_len = self.buffer().len();
+            if lines_len > 0 {
+                let end_line = (cursor_line + amount).min(lines_len);
+                let mut yanked_text = String::new();
+
+                for i in cursor_line..end_line {
+                    if let Some(line) = self.buffer().lines().get(i) {
+                        yanked_text.push_str(&line.content());
+                        yanked_text.push('\n');
+                    }
+                }
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.push_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error)
+                    }
+                }
+                self.buffer_mut().remove_lines(cursor_line, end_line);
+                let new_len = self.buffer().len();
+                let new_cursor = if new_len == 0 {
+                    0
+                } else {
+                    cursor_line.min(new_len - 1)
+                };
+                self.set_cursor(new_cursor, 0);
+                self.ensure_cursor_visible();
+                self.push_info(
+                    format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
+                    LineStyle::Dim,
+                );
+                self.scroll_to_bottom_view();
+            }
+        }
         Ok(())
     }
 
