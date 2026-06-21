@@ -3046,16 +3046,47 @@ impl Repl {
         let mut gutter = vec![' '; line_count];
         for h in 0..patch.num_hunks() {
             let mut i = 0;
+
+            let mut lines = Vec::new();
             while let Ok(line) = patch.line_in_hunk(h, i) {
-                if line.origin() == '+' {
-                    if let Some(nl) = line.new_lineno() {
-                        let idx = (nl - 1) as usize;
-                        if idx < gutter.len() {
-                            gutter[idx] = '+';
+                lines.push(line);
+                i += 1;
+            }
+
+            let has_addition = lines.iter().any(|l| l.origin() == '+');
+            if has_addition {
+                for line in &lines {
+                    if line.origin() == '+' {
+                        if let Some(nl) = line.new_lineno() {
+                            let idx = (nl - 1) as usize;
+                            if idx < gutter.len() {
+                                gutter[idx] = '+';
+                            }
                         }
                     }
                 }
-                i += 1;
+            } else {
+                // Pure deletion hunk. Mark the line after the deletion to indicate a change.
+                let mut found_deletion = false;
+                let mut marked = false;
+                for line in &lines {
+                    if line.origin() == '-' {
+                        found_deletion = true;
+                    } else if line.origin() == ' ' && found_deletion {
+                        if let Some(nl) = line.new_lineno() {
+                            let idx = (nl - 1) as usize;
+                            if idx < gutter.len() {
+                                gutter[idx] = '+';
+                                marked = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                if found_deletion && !marked && !gutter.is_empty() {
+                    let last_idx = gutter.len() - 1;
+                    gutter[last_idx] = '+';
+                }
             }
         }
         Some(gutter)
