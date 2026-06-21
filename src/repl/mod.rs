@@ -303,8 +303,11 @@ impl Repl {
             "  yy               → Yank line to clipboard",
             LineStyle::Dim,
         );
+
         self.push_llm_line("  dd (5dd)         → Delete line (5 lines)", LineStyle::Dim);
         self.push_llm_line("  u                → Undo line deletion", LineStyle::Dim);
+        self.push_llm_line("  o                → Open via $EDITOR", LineStyle::Dim);
+        self.push_llm_line("  l / L            → hunkNext/hunkPrev", LineStyle::Dim);
         self.push_llm_line("  Alt-w            → Write buffer", LineStyle::Dim);
         self.push_llm_line("  Alt-x            → Close buffer", LineStyle::Dim);
         self.push_llm_line(
@@ -898,8 +901,58 @@ impl Repl {
                 self.count = None;
             }
             KeyCode::Char('o') => {
-                self.mode = Mode::Insert;
-                self.editor.clear();
+                let buffer_name = self.buffer().name().to_string();
+                if !buffer_name.is_empty()
+                    && buffer_name != "Chat"
+                    && buffer_name != "Console"
+                    && buffer_name != "rg"
+                    && buffer_name != "fd"
+                    && buffer_name != "GitStatus"
+                {
+                    let root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let raw_path = std::path::Path::new(&buffer_name);
+                    let resolved = if raw_path.is_absolute() {
+                        raw_path.to_path_buf()
+                    } else {
+                        root.join(&buffer_name)
+                    };
+                    let line_num = self.buffer().cursor_line() + 1;
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+                    let _ = terminal::disable_raw_mode();
+                    let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
+                    let _ = stdout.flush();
+
+                    let mut cmd = std::process::Command::new(&editor);
+                    if editor == "code" || editor == "cursor" {
+                        cmd.arg("-g")
+                            .arg(format!("{}:{}", resolved.display(), line_num));
+                    } else {
+                        cmd.arg(format!("+{}", line_num)).arg(&resolved);
+                    }
+
+                    match cmd.status() {
+                        Ok(_) => {
+                            if let Ok(content) = std::fs::read_to_string(&resolved) {
+                                self.buffer_mut().clear();
+                                self.buffer_mut().push_str(&content, LineStyle::Plain);
+                                if line_num - 1 < self.buffer().len() {
+                                    self.buffer_mut().set_cursor(line_num - 1, 0);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.push_command_info(
+                                format!("  ❌ Failed to open editor: {}", e),
+                                LineStyle::Error,
+                            );
+                        }
+                    }
+
+                    let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
+                    let _ = terminal::enable_raw_mode();
+                    self.ensure_cursor_visible();
+                }
                 self.count = None;
             }
             KeyCode::Char('O') => {
@@ -983,6 +1036,36 @@ impl Repl {
             }
             KeyCode::PageDown => self.half_page_down(),
             KeyCode::PageUp => self.half_page_up(),
+            KeyCode::Char('l') => {
+                if let Some(lines) = self.get_git_gutter_lines() {
+                    if !lines.is_empty() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        let next = lines.iter().find(|&&l| l > current_line).or(lines.first());
+                        if let Some(&target) = next {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.ensure_cursor_visible();
+                        }
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::Char('L') => {
+                if let Some(lines) = self.get_git_gutter_lines() {
+                    if !lines.is_empty() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        let prev = lines
+                            .iter()
+                            .rev()
+                            .find(|&&l| l < current_line)
+                            .or(lines.last());
+                        if let Some(&target) = prev {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.ensure_cursor_visible();
+                        }
+                    }
+                }
+                self.count = None;
+            }
             KeyCode::Char('0') => {
                 let line_idx = self.buffer().cursor_line();
                 self.set_cursor(line_idx, 0);
@@ -2078,6 +2161,8 @@ impl Repl {
             ("yy", "Yank line to clipboard"),
             ("dd (5dd)", "Delete line (5 lines)"),
             ("u", "Undo line deletion"),
+            ("o", "Open in $EDITOR"),
+            ("l / L", "Next / Previous git hunk"),
             ("C-d / C-u", "Half page down / up"),
             ("C-f / C-b", "Page down / up"),
             ("Space / Enter", "Enter Insert mode"),
@@ -2530,7 +2615,15 @@ impl Repl {
         }
         Some(gutter)
     }
-
+    fn get_git_gutter_lines(&self) -> Option<Vec<usize>> {
+        let gutter = self.get_git_gutter()?;
+        let lines: Vec<usize> = gutter
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| if c == '+' { Some(i + 1) } else { None })
+            .collect();
+        Some(lines)
+    }
     fn gutter_width(&self) -> usize {
         let lines = self.buffer().len();
         let base = if lines < 10 {
