@@ -78,6 +78,7 @@ pub struct Repl {
     search_matches: Vec<usize>,
     search_match_idx: Option<usize>,
     stash_pop_target: Option<String>,
+    cached_git_info: String,
 }
 const INPUT_AREA_ROWS: usize = 2;
 impl Repl {
@@ -115,6 +116,7 @@ impl Repl {
             search_matches: Vec::new(),
             search_match_idx: None,
             stash_pop_target: None,
+            cached_git_info: String::new(),
         }
     }
     fn buffer(&self) -> &ResponseBuffer {
@@ -2313,6 +2315,11 @@ impl Repl {
             self.buffers.len(),
             truncated_name
         );
+        let git_info = if self.cached_git_info.is_empty() {
+            String::new()
+        } else {
+            format!(" {} ", self.cached_git_info)
+        };
         let status_text = if self.waiting {
             let elapsed = self
                 .thinking_start
@@ -2334,13 +2341,20 @@ impl Repl {
                 _ => "Wait".to_string(),
             };
             format!(
-                " {} {} {} ⏳ {:.1}s │ {} │ {} {} ",
-                self.spinner_char, mode_str, buffer_info, elapsed, detail, skill.emoji, skill.name
+                " {} {} {} ⏳ {:.1}s │ {} │ {} {} {}",
+                self.spinner_char,
+                mode_str,
+                buffer_info,
+                elapsed,
+                detail,
+                skill.emoji,
+                skill.name,
+                git_info
             )
         } else {
             format!(
-                " {} {} │ {} {} │ {} ",
-                mode_str, buffer_info, skill.emoji, skill.name, self.config.server.model
+                " {} {} │ {} {} │ {} {}",
+                mode_str, buffer_info, skill.emoji, skill.name, self.config.server.model, git_info
             )
         };
         queue!(
@@ -2386,9 +2400,8 @@ impl Repl {
         stdout.flush()?;
         Ok(())
     }
-    fn render(&self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+    fn render(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
-        let lines = self.buffer().lines();
         let gutter_w = self.gutter_width();
         let width = self.content_width();
         let vscroll = self.buffer().scroll_offset();
@@ -2396,6 +2409,29 @@ impl Repl {
 
         let gutter_statuses = self.get_git_gutter();
 
+        let git_info = if let Some(gutter) = &gutter_statuses {
+            let lines_count = gutter.iter().filter(|&&c| c == '+').count();
+            let mut hunks = 0;
+            let mut in_hunk = false;
+            for &c in gutter.iter() {
+                if c == '+' && !in_hunk {
+                    hunks += 1;
+                    in_hunk = true;
+                } else if c != '+' {
+                    in_hunk = false;
+                }
+            }
+            if lines_count > 0 {
+                format!("│ +{} ({}h)", lines_count, hunks)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        self.cached_git_info = git_info;
+
+        let lines = self.buffer().lines();
         for i in 0..ra_height {
             let vrow_idx = vscroll + i;
             queue!(
