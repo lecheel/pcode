@@ -34,11 +34,13 @@ impl LineEditor {
     }
 
     pub fn insert_char(&mut self, c: char) {
+        self.history_index = None;
         self.buffer.insert(self.cursor_pos, c);
         self.cursor_pos += c.len_utf8();
     }
 
     pub fn backspace(&mut self) {
+        self.history_index = None;
         if self.cursor_pos > 0 {
             let prev = self.buffer[..self.cursor_pos]
                 .char_indices()
@@ -51,6 +53,7 @@ impl LineEditor {
     }
 
     pub fn delete(&mut self) {
+        self.history_index = None;
         if self.cursor_pos < self.buffer.len() {
             let next = self.buffer[self.cursor_pos..]
                 .char_indices()
@@ -90,6 +93,7 @@ impl LineEditor {
     }
 
     pub fn clear(&mut self) {
+        self.history_index = None;
         self.buffer.clear();
         self.cursor_pos = 0;
     }
@@ -115,7 +119,7 @@ impl LineEditor {
             return;
         }
         if self.history_index.is_none() {
-            self.saved_buffer = self.buffer.clone();
+            self.saved_buffer = self.buffer[..self.cursor_pos].to_string();
         }
         let start_idx = self.history_index.unwrap_or(self.history.len());
         for i in (0..start_idx).rev() {
@@ -146,6 +150,7 @@ impl LineEditor {
     }
 
     pub fn tab_complete(&mut self, candidates: &[&str]) {
+        self.history_index = None;
         let input = &self.buffer[..self.cursor_pos];
         let matches: Vec<&&str> = candidates.iter().filter(|c| c.starts_with(input)).collect();
         if matches.is_empty() {
@@ -182,10 +187,12 @@ impl LineEditor {
     }
 
     pub fn kill_to_end(&mut self) {
+        self.history_index = None;
         self.buffer.drain(self.cursor_pos..);
     }
 
     pub fn kill_to_start(&mut self) {
+        self.history_index = None;
         self.buffer.drain(..self.cursor_pos);
         self.cursor_pos = 0;
     }
@@ -194,6 +201,7 @@ impl LineEditor {
         if self.cursor_pos == 0 {
             return;
         }
+        self.history_index = None;
         let text = &self.buffer[..self.cursor_pos];
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
