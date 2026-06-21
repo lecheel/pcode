@@ -88,6 +88,7 @@ pub struct Repl {
     stash_pop_target: Option<String>,
     cached_git_info: String,
     pending_reset_target: Option<String>,
+    fkey_help: bool,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -134,6 +135,7 @@ impl Repl {
             stash_pop_target: None,
             pending_reset_target: None,
             cached_git_info: String::new(),
+            fkey_help: false,
         }
     }
 
@@ -510,6 +512,9 @@ impl Repl {
     }
 
     fn handle_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if self.fkey_help && key.code != KeyCode::Char('?') {
+            self.fkey_help = false;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.waiting {
                 self.push_info(
@@ -1173,6 +1178,13 @@ impl Repl {
                 self.count = None;
                 self.pending = None;
                 self.render_spinner_only(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('?') => {
+                self.fkey_help = !self.fkey_help;
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
                 return Ok(());
             }
             KeyCode::Char('n') => {
@@ -2895,6 +2907,54 @@ impl Repl {
                 queue!(stdout, cursor::Show, cursor::MoveTo(col as u16, input_y))?;
             }
         }
+
+        if self.fkey_help {
+            let term_w = self.term_width() as u16;
+            let margin = 2;
+            let box_w = term_w.saturating_sub(margin * 2);
+            let x = margin;
+            let y_bot = self.height.saturating_sub(3);
+            let y_l2 = y_bot.saturating_sub(1);
+            let y_l1 = y_l2.saturating_sub(1);
+            let y_top = y_l1.saturating_sub(1);
+
+            let inner_w = (box_w as usize).saturating_sub(2);
+            let pad = |s: &str| -> String {
+                let current_w = UnicodeWidthStr::width(s);
+                if current_w < inner_w {
+                    format!("{}{}", s, " ".repeat(inner_w - current_w))
+                } else {
+                    s.to_string()
+                }
+            };
+
+            let line1_str = format!(
+                " F1:{}Chat  F2:{}Edit  F3:{}Full  F4-F8:NA ",
+                SKILL_GROUPS[0].emoji, SKILL_GROUPS[4].emoji, SKILL_GROUPS[7].emoji
+            );
+            let line2_str = " F9:Git  F10:Skills  F11:Prompt  F12:Cancel ";
+
+            let l1 = pad(&line1_str);
+            let l2 = pad(&line2_str);
+
+            queue!(
+                stdout,
+                SetForegroundColor(Color::Yellow),
+                SetAttribute(Attribute::Bold),
+                cursor::MoveTo(x, y_top),
+                Print(format!("╭{}╮", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_bot),
+                Print(format!("╰{}╯", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_l1),
+                Print(format!("│{}│", l1)),
+                cursor::MoveTo(x, y_l2),
+                Print(format!("│{}│", l2)),
+                style::ResetColor,
+                SetAttribute(Attribute::Reset),
+                cursor::Hide
+            )?;
+        }
+
         stdout.flush()?;
         Ok(())
     }
