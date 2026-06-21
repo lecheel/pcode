@@ -2308,6 +2308,9 @@ impl Repl {
         let width = self.content_width();
         let vscroll = self.buffer().scroll_offset();
         let visual_rows = self.buffer().visual_rows(width);
+
+        let gutter_statuses = self.get_git_gutter();
+
         for i in 0..ra_height {
             let vrow_idx = vscroll + i;
             queue!(
@@ -2321,16 +2324,36 @@ impl Repl {
                     format!(
                         "{:>width$} ",
                         vrow.logical_line + 1,
-                        width = gutter_w.saturating_sub(1)
+                        width = gutter_w.saturating_sub(2)
                     )
                 } else {
-                    " ".repeat(gutter_w)
+                    " ".repeat(gutter_w - 1)
                 };
-
                 queue!(
                     stdout,
                     SetForegroundColor(Color::DarkGrey),
                     Print(&line_num),
+                    style::ResetColor,
+                )?;
+
+                let git_char = if vrow.start_col == 0 {
+                    gutter_statuses
+                        .as_ref()
+                        .and_then(|g| g.get(vrow.logical_line).copied())
+                        .unwrap_or(' ')
+                } else {
+                    ' '
+                };
+                let git_color = if git_char == '+' {
+                    Color::Green
+                } else {
+                    Color::DarkGrey
+                };
+
+                queue!(
+                    stdout,
+                    SetForegroundColor(git_color),
+                    Print(git_char),
                     style::ResetColor,
                 )?;
 
@@ -2414,9 +2437,103 @@ impl Repl {
             120
         }
     }
+    fn get_git_gutter(&self) -> Option<Vec<char>> {
+        let buffer_name = self.buffer().name();
+        if buffer_name == "Chat"
+            || buffer_name == "Console"
+            || buffer_name == "rg"
+            || buffer_name == "fd"
+            || buffer_name == "GitStatus"
+            || buffer_name.is_empty()
+        {
+            return None;
+        }
+
+        let repo_path = std::path::Path::new(&self.config.tools.project_root);
+        let repo = match git2::Repository::discover(repo_path) {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+
+        let abs_repo_path = match repo_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
+        let path = std::path::Path::new(buffer_name);
+        let abs_file_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            abs_repo_path.join(path)
+        };
+
+        let rel_path = match abs_file_path.strip_prefix(&abs_repo_path) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
+        let content: String = self
+            .buffer()
+            .lines()
+            .iter()
+            .map(|l| l.content().clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let line_count = self.buffer().lines().len();
+
+        let head_tree = match repo.head() {
+            Ok(h) => match h.peel_to_tree() {
+                Ok(t) => t,
+                Err(_) => return Some(vec!['+'; line_count]),
+            },
+            Err(_) => return Some(vec!['+'; line_count]),
+        };
+
+        let entry = match head_tree.get_path(rel_path) {
+            Ok(e) => e,
+            Err(_) => {
+                return Some(vec!['+'; line_count]);
+            }
+        };
+
+        let old_blob = match entry.to_object(&repo).and_then(|o| o.peel_to_blob()) {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+
+        let file_path = std::path::Path::new(buffer_name);
+        let patch = match git2::Patch::from_blob_and_buffer(
+            &old_blob,
+            Some(file_path),
+            content.as_bytes(),
+            Some(file_path),
+            None,
+        ) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
+        let mut gutter = vec![' '; line_count];
+        for h in 0..patch.num_hunks() {
+            let mut i = 0;
+            while let Ok(line) = patch.line_in_hunk(h, i) {
+                if line.origin() == '+' {
+                    if let Some(nl) = line.new_lineno() {
+                        let idx = (nl - 1) as usize;
+                        if idx < gutter.len() {
+                            gutter[idx] = '+';
+                        }
+                    }
+                }
+                i += 1;
+            }
+        }
+        Some(gutter)
+    }
+
     fn gutter_width(&self) -> usize {
         let lines = self.buffer().len();
-        if lines < 10 {
+        let base = if lines < 10 {
             2
         } else if lines < 100 {
             3
@@ -2426,7 +2543,8 @@ impl Repl {
             5
         } else {
             lines.to_string().len() + 1
-        }
+        };
+        base + 1 // +1 for git gutter
     }
     fn content_width(&self) -> usize {
         self.term_width().saturating_sub(self.gutter_width() + 1)
