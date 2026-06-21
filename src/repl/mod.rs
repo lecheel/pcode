@@ -1789,7 +1789,7 @@ impl Repl {
                                 LineStyle::Error,
                             );
                         } else {
-                            let content: String = self
+                            let mut content: String = self
                                 .buffer()
                                 .lines()
                                 .iter()
@@ -2991,7 +2991,7 @@ impl Repl {
             Err(_) => return None,
         };
 
-        let content: String = self
+        let mut content: String = self
             .buffer()
             .lines()
             .iter()
@@ -3021,6 +3021,17 @@ impl Repl {
         };
 
         let file_path = std::path::Path::new(buffer_name);
+
+        // Prevent false positive diffs on the last line caused by `lines()`
+        // stripping the trailing newline when the file was loaded.
+        if !content.is_empty() {
+            if let Ok(bytes) = std::fs::read(&abs_file_path) {
+                if bytes.last() == Some(&b'\n') && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+            }
+        }
+
         let patch = match git2::Patch::from_blob_and_buffer(
             &old_blob,
             Some(file_path),

@@ -173,40 +173,49 @@ impl ResponseBuffer {
             }
 
             let mut col = 0;
-            while col < chars.len() {
-                let end = (col + width).min(chars.len());
-
-                // Reconstruct segments for this visual row
-                let mut segments = Vec::new();
-                let mut current_text = String::new();
-                let mut current_style = chars[col].1;
-
-                for (ch, style) in &chars[col..end] {
-                    if *style != current_style {
-                        if !current_text.is_empty() {
-                            segments.push((current_text.clone(), current_style));
-                            current_text.clear();
-                        }
-                        current_style = *style;
-                    }
-                    current_text.push(*ch);
-                }
-                if !current_text.is_empty() {
-                    segments.push((current_text.clone(), current_style));
-                }
-
-                let content: String = segments.iter().map(|(s, _)| s.as_str()).collect();
-
+            if chars.is_empty() {
+                // Ensure empty lines generate a visual row so the cursor
+                // doesn't jump to the top when navigating to them.
                 rows.push(VisualRow {
                     logical_line: line_idx,
-                    content,
-                    segments,
-                    start_col: col,
-                    end_col: end,
-                    fg_color: chars[col].1.fg_color(),
-                    is_bold: chars[col].1.is_bold(),
+                    content: String::new(),
+                    segments: Vec::new(),
+                    start_col: 0,
+                    end_col: 0,
+                    fg_color: LineStyle::Plain.fg_color(),
+                    is_bold: false,
                 });
-                col = end;
+            } else {
+                while col < chars.len() {
+                    let end = (col + width).min(chars.len());
+                    let mut segments = Vec::new();
+                    let mut current_text = String::new();
+                    let mut current_style = chars[col].1;
+                    for (ch, style) in &chars[col..end] {
+                        if *style != current_style {
+                            if !current_text.is_empty() {
+                                segments.push((current_text.clone(), current_style));
+                                current_text.clear();
+                            }
+                            current_style = *style;
+                        }
+                        current_text.push(*ch);
+                    }
+                    if !current_text.is_empty() {
+                        segments.push((current_text.clone(), current_style));
+                    }
+                    let content: String = segments.iter().map(|(s, _)| s.as_str()).collect();
+                    rows.push(VisualRow {
+                        logical_line: line_idx,
+                        content,
+                        segments,
+                        start_col: col,
+                        end_col: end,
+                        fg_color: chars[col].1.fg_color(),
+                        is_bold: chars[col].1.is_bold(),
+                    });
+                    col = end;
+                }
             }
         }
         rows
