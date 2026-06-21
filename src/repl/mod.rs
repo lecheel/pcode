@@ -1149,8 +1149,53 @@ impl Repl {
                     return Ok(());
                 }
             }
+
             KeyCode::Char('d') => {
                 if self.pending == Some('d') {
+                    let buffer_name = self.buffer().name().to_string();
+                    if buffer_name == "SedChanges" {
+                        let cursor_line = self.buffer().cursor_line();
+                        let mut block_start = cursor_line;
+                        while block_start > 0 {
+                            let content = self
+                                .buffer()
+                                .lines()
+                                .get(block_start)
+                                .map(|l| l.content())
+                                .unwrap_or_default();
+                            if content.starts_with("📄 ") {
+                                break;
+                            }
+                            block_start -= 1;
+                        }
+                        let content = self
+                            .buffer()
+                            .lines()
+                            .get(block_start)
+                            .map(|l| l.content())
+                            .unwrap_or_default();
+                        if content.starts_with("📄 ") && cursor_line <= block_start + 3 {
+                            let lines_len = self.buffer().len();
+                            let end_line = (block_start + 4).min(lines_len);
+                            self.buffer_mut().remove_lines(block_start, end_line);
+
+                            let new_len = self.buffer().len();
+                            let new_cursor = if new_len == 0 {
+                                0
+                            } else {
+                                block_start.min(new_len - 1)
+                            };
+                            self.set_cursor(new_cursor, 0);
+                            self.ensure_cursor_visible();
+                            self.push_command_info("  🗑️  Discarded change", LineStyle::Dim);
+                            self.scroll_to_bottom_view();
+                        }
+                        self.pending = None;
+                        self.count = None;
+                        self.render(stdout)?;
+                        return Ok(());
+                    }
+
                     let cursor_line = self.buffer().cursor_line();
                     let lines_len = self.buffer().len();
                     if lines_len > 0 {
@@ -1497,6 +1542,158 @@ impl Repl {
                 } else {
                     self.load_file_to_buffer(arg, stdout)?;
                     return Ok(CommandResult::Continue);
+                }
+            }
+
+            "sed" => {
+                if arg.is_empty() {
+                    self.push_command_info(
+                        "  Usage: :sed <find>|<replace> [path] or :sed /find/replace/ [path]",
+                        LineStyle::Dim,
+                    );
+                } else {
+                    let (find, replace, path) = if arg.starts_with('/') {
+                        let parts: Vec<&str> = arg[1..].splitn(3, '/').collect();
+                        if parts.len() >= 2 {
+                            (
+                                parts[0].to_string(),
+                                parts[1].to_string(),
+                                if parts.len() == 3 {
+                                    parts[2].to_string()
+                                } else {
+                                    ".".to_string()
+                                },
+                            )
+                        } else {
+                            (String::new(), String::new(), ".".to_string())
+                        }
+                    } else {
+                        let parts: Vec<&str> = arg.splitn(3, '|').collect();
+                        if parts.len() >= 2 {
+                            (
+                                parts[0].to_string(),
+                                parts[1].to_string(),
+                                if parts.len() == 3 {
+                                    parts[2].to_string()
+                                } else {
+                                    ".".to_string()
+                                },
+                            )
+                        } else {
+                            (String::new(), String::new(), ".".to_string())
+                        }
+                    };
+
+                    if find.is_empty() {
+                        self.push_command_info(
+                            "  ❌ Find pattern cannot be empty",
+                            LineStyle::Error,
+                        );
+                        self.scroll_to_bottom();
+                        return Ok(CommandResult::Continue);
+                    }
+
+                    let output = std::process::Command::new("rg")
+                        .arg("--color")
+                        .arg("never")
+                        .arg("-n")
+                        .arg("-H")
+                        .arg("--no-heading")
+                        .arg("-F") // Fixed string match (like sed)
+                        .arg(&find)
+                        .arg(&path)
+                        .output();
+
+                    match output {
+                        Ok(out) => {
+                            let stdout_str = String::from_utf8_lossy(&out.stdout);
+                            let lines: Vec<&str> = stdout_str.lines().collect();
+
+                            let new_buf_idx = if self.buffer().name() == "SedChanges" {
+                                self.active_buffer
+                            } else {
+                                let idx = self.buffers.len();
+                                self.buffers.push(ResponseBuffer::with_name("SedChanges"));
+                                idx
+                            };
+                            self.active_buffer = new_buf_idx;
+                            self.buffers[new_buf_idx].clear();
+
+                            let c_idx = self.console_buffer_idx();
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  🔍 sed: {} -> {}", find, replace),
+                                LineStyle::Info,
+                            ));
+
+                            let mut count = 0;
+                            for line in lines.iter() {
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                let cols: Vec<&str> = line.splitn(3, ':').collect();
+                                if cols.len() == 3 {
+                                    let file = cols[0].trim_start_matches("./").to_string();
+                                    let line_num = cols[1].parse::<usize>().unwrap_or(0);
+                                    let old_line = cols[2].to_string();
+
+                                    let new_line = old_line.replace(&find, &replace);
+
+                                    self.buffers[new_buf_idx].push(BufferLine::from_segments(
+                                        vec![
+                                            ("📄 ".to_string(), LineStyle::Info),
+                                            (
+                                                format!("{}:{}", file, line_num),
+                                                LineStyle::ToolResult,
+                                            ),
+                                        ],
+                                    ));
+
+                                    let old_segments = highlight_segments(
+                                        &old_line,
+                                        &find,
+                                        LineStyle::Plain,
+                                        LineStyle::User,
+                                        "  - ",
+                                        LineStyle::Error,
+                                    );
+                                    self.buffers[new_buf_idx]
+                                        .push(BufferLine::from_segments(old_segments));
+
+                                    let new_segments = highlight_segments(
+                                        &new_line,
+                                        &replace,
+                                        LineStyle::Plain,
+                                        LineStyle::ToolResult,
+                                        "  + ",
+                                        LineStyle::ToolResult,
+                                    );
+                                    self.buffers[new_buf_idx]
+                                        .push(BufferLine::from_segments(new_segments));
+
+                                    self.buffers[new_buf_idx].push_blank();
+                                    count += 1;
+                                }
+                            }
+
+                            if count == 0 {
+                                self.buffers[new_buf_idx].push(BufferLine::new(
+                                    "  No matches found".to_string(),
+                                    LineStyle::Dim,
+                                ));
+                            } else {
+                                self.buffers[new_buf_idx].push(BufferLine::new(
+                                    format!(
+                                        "  {} proposed changes. [dd] to discard, [w] to apply",
+                                        count
+                                    ),
+                                    LineStyle::Info,
+                                ));
+                            }
+                            self.scroll_to_bottom();
+                        }
+                        Err(e) => self
+                            .push_command_info(format!("  ❌ sed failed: {}", e), LineStyle::Error),
+                    }
                 }
             }
             "write" | "w" => {
@@ -2983,6 +3180,38 @@ fn list_project_files(root: &std::path::Path) -> Vec<String> {
     walk(root, root, &mut files, 0);
     files.sort();
     files
+}
+fn highlight_segments(
+    line: &str,
+    pattern: &str,
+    line_style: LineStyle,
+    pattern_style: LineStyle,
+    prefix: &str,
+    prefix_style: LineStyle,
+) -> Vec<(String, LineStyle)> {
+    let mut segments = vec![(prefix.to_string(), prefix_style)];
+    if pattern.is_empty() {
+        segments.push((line.to_string(), line_style));
+        return segments;
+    }
+    let mut last_end = 0;
+    let mut start = 0;
+    while let Some(rel_start) = line[start..].find(pattern) {
+        let abs_start = start + rel_start;
+        if abs_start > last_end {
+            segments.push((line[last_end..abs_start].to_string(), line_style));
+        }
+        segments.push((
+            line[abs_start..abs_start + pattern.len()].to_string(),
+            pattern_style,
+        ));
+        last_end = abs_start + pattern.len();
+        start = last_end;
+    }
+    if last_end < line.len() {
+        segments.push((line[last_end..].to_string(), line_style));
+    }
+    segments
 }
 fn highlight_search(content: &str, query: &str) -> String {
     let mut result = String::new();
