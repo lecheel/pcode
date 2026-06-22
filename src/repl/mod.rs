@@ -179,12 +179,20 @@ impl Repl {
         let idx = self.console_buffer_idx();
         self.buffers[idx].push(BufferLine::new(content, style));
         self.active_buffer = idx;
+        let h = self.response_area_height();
+        let w = self.content_width();
+        self.buffers[idx].scroll_to_bottom(h, w);
     }
 
     // Logs to console without switching the active view
     fn push_info(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.console_buffer_idx();
         self.buffers[idx].push(BufferLine::new(content, style));
+        if self.active_buffer == idx {
+            let h = self.response_area_height();
+            let w = self.content_width();
+            self.buffers[idx].scroll_to_bottom(h, w);
+        }
     }
 
     fn push_llm_line(&mut self, content: impl Into<String>, style: LineStyle) {
@@ -383,8 +391,8 @@ impl Repl {
                 match &event {
                     crate::agent::AgentEvent::Thinking { .. } => {}
                     crate::agent::AgentEvent::RunningTool { name } => {
-                        self.push_llm_line(format!("  ⏳ Running {}...", name), LineStyle::Dim);
-                        self.scroll_llm_to_bottom();
+                        let ts = Self::get_timestamp();
+                        self.push_info(format!("[{}] ⏳ Running {}...", ts, name), LineStyle::Dim);
                         need_render = true;
                     }
                     crate::agent::AgentEvent::Verifying => {
@@ -392,11 +400,12 @@ impl Repl {
                         self.scroll_llm_to_bottom();
                         need_render = true;
                     }
-                    crate::agent::AgentEvent::ToolCall { summary, .. } => {
+                    crate::agent::AgentEvent::ToolCall { name, summary } => {
+                        let ts = Self::get_timestamp();
+                        self.push_info(format!("[{}] ⚙️  {}", ts, name), LineStyle::Tool);
                         for line in summary.lines() {
-                            self.push_llm_line(format!("  {}", line), LineStyle::Tool);
+                            self.push_info(format!("       {}", line), LineStyle::Tool);
                         }
-                        self.scroll_llm_to_bottom();
                         need_render = true;
                     }
                     crate::agent::AgentEvent::ToolResult {
@@ -2928,11 +2937,37 @@ impl Repl {
                 }
             };
 
+            let pad_item = |s: &str| -> String {
+                let target_w = 13;
+                let w = UnicodeWidthStr::width(s);
+                if w < target_w {
+                    format!("{}{}", s, " ".repeat(target_w - w))
+                } else {
+                    s.to_string()
+                }
+            };
+            let get_item = |key: &str, name: &str, idx: Option<usize>| -> String {
+                let emoji = idx.map(|i| SKILL_GROUPS[i].emoji).unwrap_or("");
+                pad_item(&format!("{}: {}{}", key, emoji, name))
+            };
             let line1_str = format!(
-                " F1:{}Chat  F2:{}Edit  F3:{}Full  F4-F8:NA ",
-                SKILL_GROUPS[0].emoji, SKILL_GROUPS[4].emoji, SKILL_GROUPS[7].emoji
+                "{}{}{}{}{}{}",
+                get_item(" F1", "Chat", Some(0)),
+                get_item(" F2", "Edit", Some(4)),
+                get_item(" F3", "Full", Some(7)),
+                get_item(" F4", "--NA", None),
+                get_item(" F5", "--NA", None),
+                get_item(" F6", "--NA", None),
             );
-            let line2_str = " F9:Git  F10:Skills  F11:Prompt  F12:Cancel ";
+            let line2_str = format!(
+                "{}{}{}{}{}{}",
+                get_item(" F7", "--NA", None),
+                get_item(" F8", "--NA", None),
+                get_item(" F9", "Git", None),
+                get_item("F10", "Skills", None),
+                get_item("F11", "Prompt", None),
+                get_item("F12", "Cancel", None),
+            );
 
             let l1 = pad(&line1_str);
             let l2 = pad(&line2_str);
