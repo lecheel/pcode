@@ -2963,7 +2963,7 @@ impl Repl {
                 "{}{}{}{}{}{}",
                 get_item(" F7", "--NA", None),
                 get_item(" F8", "--NA", None),
-                get_item(" F9", "Git", None),
+                get_item(" F9", " Git", None),
                 get_item("F10", "Skills", None),
                 get_item("F11", "Prompt", None),
                 get_item("F12", "Cancel", None),
