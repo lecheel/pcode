@@ -2835,14 +2835,18 @@ impl Repl {
                 self.popup.hide();
             }
             KeyCode::Char(c) => {
-                self.popup.filter.push(c);
-                let f = self.popup.filter.clone();
-                self.popup.update_filter(&f);
+                if self.popup.show_filter {
+                    self.popup.filter.push(c);
+                    let f = self.popup.filter.clone();
+                    self.popup.update_filter(&f);
+                }
             }
             KeyCode::Backspace => {
-                self.popup.filter.pop();
-                let f = self.popup.filter.clone();
-                self.popup.update_filter(&f);
+                if self.popup.show_filter {
+                    self.popup.filter.pop();
+                    let f = self.popup.filter.clone();
+                    self.popup.update_filter(&f);
+                }
             }
             _ => {}
         }
@@ -3547,17 +3551,25 @@ impl Repl {
                 return;
             }
             let current_line_num = self.buffer().cursor_line() + 1;
+            let active_idx = diff_lines
+                .iter()
+                .position(|&(line_num, _)| line_num == current_line_num)
+                .unwrap_or(0);
             let items: Vec<PopupItem> = diff_lines
                 .iter()
-                .map(|&(line_num, ref display)| PopupItem {
-                    text: display.clone(),
-                    is_active: line_num == current_line_num,
-                    id: Some(line_num),
+                .map(|&(line_num, ref display)| {
+                    let is_active = line_num == current_line_num;
+                    PopupItem {
+                        text: display.clone(),
+                        is_active,
+                        id: Some(line_num),
+                    }
                 })
                 .collect();
             self.popup_mode = PopupMode::GitHunks;
             self.popup
-                .show("Git Hunk Diff", items, 0, PopupPosition::Bottom);
+                .show("Git Hunk Diff", items, active_idx, PopupPosition::Bottom);
+            self.popup.show_filter = false;
         } else {
             self.push_info(
                 "  Cursor is not inside a git hunk or not a git file.",
