@@ -369,6 +369,10 @@ impl Repl {
         self.push_llm_line("  Alt-w            → Write buffer", LineStyle::Dim);
         self.push_llm_line("  Alt-x            → Close buffer", LineStyle::Dim);
         self.push_llm_line(
+            "  :sed /search/replace :fd main.rs :rg fn main  (replace, find, grep)",
+            LineStyle::Dim,
+        );
+        self.push_llm_line(
             "  Alt-- / Alt-=    → Previous / Next buffer",
             LineStyle::Dim,
         );
@@ -1138,12 +1142,12 @@ impl Repl {
                 }
                 self.count = None;
             }
-            KeyCode::Char('O') => {
+            KeyCode::Char('>') => {
                 self.mode = Mode::Insert;
                 self.editor.clear();
                 self.count = None;
             }
-            KeyCode::Char(':') | KeyCode::Char('>') => {
+            KeyCode::Char(':') => {
                 self.mode = Mode::Command;
                 self.cmd_editor.clear();
                 self.count = None;
