@@ -1,6 +1,12 @@
 use super::*;
 use std::io;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum PopupPosition {
+    Center,
+    Bottom,
+}
+
 fn disp_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
@@ -28,6 +34,7 @@ pub struct Popup {
     pub all_items: Vec<PopupItem>,
     pub filter: String,
     pub max_height: usize,
+    pub position: PopupPosition,
 }
 impl Popup {
     pub fn new() -> Self {
@@ -39,9 +46,17 @@ impl Popup {
             all_items: Vec::new(),
             filter: String::new(),
             max_height: 15,
+            position: PopupPosition::Center,
         }
     }
-    pub fn show(&mut self, title: &str, items: Vec<PopupItem>, initial_cursor: usize) {
+
+    pub fn show(
+        &mut self,
+        title: &str,
+        items: Vec<PopupItem>,
+        initial_cursor: usize,
+        position: PopupPosition,
+    ) {
         let len = items.len();
         self.active = true;
         self.title = title.to_string();
@@ -50,6 +65,7 @@ impl Popup {
         self.cursor = initial_cursor.min(len.saturating_sub(1));
         self.filter = String::new();
         self.max_height = len.max(1).min(15);
+        self.position = position;
     }
     pub fn hide(&mut self) {
         self.active = false;
@@ -140,7 +156,10 @@ impl Popup {
         let box_height = (visible_items + 3) as u16; // +3 for border top, filter line, border bottom
 
         let col = (width.saturating_sub(box_width as u16)) / 2;
-        let row = (height.saturating_sub(box_height)) / 2;
+        let row = match self.position {
+            PopupPosition::Center => (height.saturating_sub(box_height)) / 2,
+            PopupPosition::Bottom => height.saturating_sub(box_height).saturating_sub(2),
+        };
 
         let title_disp = disp_width(&self.title);
         let total_pad = inner_width.saturating_sub(title_disp).saturating_sub(2);
@@ -351,6 +370,11 @@ impl super::Repl {
             })
             .collect();
 
-        self.popup.show("Skill Groups", items, active_skill_group);
+        self.popup.show(
+            "Skill Groups",
+            items,
+            active_skill_group,
+            PopupPosition::Center,
+        );
     }
 }

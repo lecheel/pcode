@@ -383,6 +383,14 @@ impl ResponseBuffer {
         let max_scroll = rows.len().saturating_sub(visible_height);
         self.visual_scroll = self.visual_scroll.min(max_scroll);
     }
+    pub fn center_cursor(&mut self, visible_height: usize, width: usize) {
+        let cursor_vrow = self.cursor_visual_row(width);
+        let half = visible_height / 2;
+        self.visual_scroll = cursor_vrow.saturating_sub(half);
+        let rows = self.visual_rows(width);
+        let max_scroll = rows.len().saturating_sub(visible_height);
+        self.visual_scroll = self.visual_scroll.min(max_scroll);
+    }
     fn clamp_cursor_col(&mut self) {
         if let Some(line) = self.lines.get(self.cursor_line) {
             let max_col = line.content().chars().count().saturating_sub(1);

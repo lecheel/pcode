@@ -16,7 +16,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use editor::LineEditor;
-use helper::{Popup, PopupItem};
+use helper::{Popup, PopupItem, PopupPosition};
 use mode::Mode;
 use std::io::{self, Write};
 use unicode_width::UnicodeWidthStr;
@@ -49,6 +49,7 @@ pub enum PopupMode {
     FilePicker,
     TaskFilePicker,
     Buffers,
+    GitHunks,
 }
 
 enum CommandResult {
@@ -217,6 +218,12 @@ impl Repl {
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffer_mut().ensure_cursor_visible(h, w);
+    }
+
+    fn center_cursor(&mut self) {
+        let h = self.response_area_height();
+        let w = self.content_width();
+        self.buffer_mut().center_cursor(h, w);
     }
 
     fn move_bottom(&mut self) {
@@ -634,6 +641,11 @@ impl Repl {
                 self.scroll_to_bottom();
                 self.render(stdout)?;
             }
+            return Ok(());
+        }
+        if key.code == KeyCode::F(4) {
+            self.show_git_hunk_popup();
+            self.render(stdout)?;
             return Ok(());
         }
         if key.code == KeyCode::F(11) {
@@ -1237,7 +1249,7 @@ impl Repl {
                         let next = lines.iter().find(|&&l| l > current_line).or(lines.first());
                         if let Some(&target) = next {
                             self.buffer_mut().set_cursor(target - 1, 0);
-                            self.ensure_cursor_visible();
+                            self.center_cursor();
                         }
                     }
                 }
@@ -1254,12 +1266,24 @@ impl Repl {
                             .or(lines.last());
                         if let Some(&target) = prev {
                             self.buffer_mut().set_cursor(target - 1, 0);
-                            self.ensure_cursor_visible();
+                            self.center_cursor();
                         }
                     }
                 }
                 self.count = None;
             }
+            KeyCode::Char('z') => {
+                if self.pending == Some('z') {
+                    self.center_cursor();
+                    self.pending = None;
+                    self.count = None;
+                } else {
+                    self.pending = Some('z');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+
             KeyCode::Char('0') => {
                 let line_idx = self.buffer().cursor_line();
                 self.set_cursor(line_idx, 0);
@@ -2785,6 +2809,15 @@ impl Repl {
                                 }
                             }
                         }
+                        PopupMode::GitHunks => {
+                            if let Some(item) = self.popup.items.get(self.popup.cursor) {
+                                if let Some(line_num) = item.id {
+                                    let target_line = line_num - 1;
+                                    self.buffer_mut().set_cursor(target_line, 0);
+                                    self.center_cursor();
+                                }
+                            }
+                        }
                     }
                 }
                 self.popup.hide();
@@ -2959,7 +2992,7 @@ impl Repl {
                 get_item(" F1", "Chat", Some(0)),
                 get_item(" F2", "Edit", Some(4)),
                 get_item(" F3", "Full", Some(7)),
-                get_item(" F4", "--NA", None),
+                get_item(" F4", "Hunks", None),
                 get_item(" F5", "--NA", None),
                 get_item(" F6", "--NA", None),
             );
@@ -3506,6 +3539,140 @@ impl Repl {
         Ok(())
     }
 
+    fn show_git_hunk_popup(&mut self) {
+        if let Some(diff_lines) = self.get_current_hunk_diff() {
+            if diff_lines.is_empty() {
+                self.push_info("  No git hunks found in this buffer.", LineStyle::Dim);
+                self.scroll_to_bottom();
+                return;
+            }
+            let current_line_num = self.buffer().cursor_line() + 1;
+            let items: Vec<PopupItem> = diff_lines
+                .iter()
+                .map(|&(line_num, ref display)| PopupItem {
+                    text: display.clone(),
+                    is_active: line_num == current_line_num,
+                    id: Some(line_num),
+                })
+                .collect();
+            self.popup_mode = PopupMode::GitHunks;
+            self.popup
+                .show("Git Hunk Diff", items, 0, PopupPosition::Bottom);
+        } else {
+            self.push_info(
+                "  Cursor is not inside a git hunk or not a git file.",
+                LineStyle::Dim,
+            );
+            self.scroll_to_bottom();
+        }
+    }
+
+    fn get_current_hunk_diff(&self) -> Option<Vec<(usize, String)>> {
+        let buffer_name = self.buffer().name();
+        if buffer_name == "Chat"
+            || buffer_name == "Console"
+            || buffer_name == "rg"
+            || buffer_name == "fd"
+            || buffer_name == "GitStatus"
+            || buffer_name.is_empty()
+        {
+            return None;
+        }
+        let repo_path = std::path::Path::new(&self.config.tools.project_root);
+        let repo = match git2::Repository::discover(repo_path) {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+        let abs_repo_path = match repo_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+        let path = std::path::Path::new(buffer_name);
+        let abs_file_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            abs_repo_path.join(path)
+        };
+        let rel_path = match abs_file_path.strip_prefix(&abs_repo_path) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+        let mut content: String = self
+            .buffer()
+            .lines()
+            .iter()
+            .map(|l| l.content().clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let head_tree = match repo.head() {
+            Ok(h) => match h.peel_to_tree() {
+                Ok(t) => t,
+                Err(_) => return None,
+            },
+            Err(_) => return None,
+        };
+        let entry = match head_tree.get_path(rel_path) {
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+        let old_blob = match entry.to_object(&repo).and_then(|o| o.peel_to_blob()) {
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+        let file_path = std::path::Path::new(buffer_name);
+        if !content.is_empty() {
+            if let Ok(bytes) = std::fs::read(&abs_file_path) {
+                if bytes.last() == Some(&b'\n') && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+            }
+        }
+        let patch = match git2::Patch::from_blob_and_buffer(
+            &old_blob,
+            Some(file_path),
+            content.as_bytes(),
+            Some(file_path),
+            None,
+        ) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
+        let mut diff_lines = Vec::new();
+        let current_line_num = self.buffer().cursor_line() + 1;
+
+        for h in 0..patch.num_hunks() {
+            let (hunk, _) = match patch.hunk(h) {
+                Ok(hk) => hk,
+                Err(_) => continue,
+            };
+            let new_start = hunk.new_start() as usize;
+            let new_lines = hunk.new_lines() as usize;
+            let end = new_start + new_lines.saturating_sub(1);
+
+            if current_line_num >= new_start && current_line_num <= end {
+                let mut i = 0;
+                while let Ok(line) = patch.line_in_hunk(h, i) {
+                    let origin = line.origin();
+                    let prefix = match origin {
+                        '+' => "+ ",
+                        '-' => "- ",
+                        _ => "  ",
+                    };
+                    if let Ok(s) = std::str::from_utf8(line.content()) {
+                        let line_num = line.new_lineno().map(|n| n as usize).unwrap_or(0);
+                        let display = format!("{}{}", prefix, s.trim_end());
+                        diff_lines.push((line_num, display));
+                    }
+                    i += 1;
+                }
+                return Some(diff_lines);
+            }
+        }
+
+        None
+    }
+
     fn show_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
         let files = list_project_files(&root);
@@ -3518,7 +3685,8 @@ impl Repl {
             })
             .collect();
         self.popup_mode = PopupMode::FilePicker;
-        self.popup.show("Open File", items, 0);
+        self.popup
+            .show("Open File", items, 0, PopupPosition::Center);
     }
 
     fn show_task_file_picker(&mut self) {
@@ -3534,7 +3702,8 @@ impl Repl {
             })
             .collect();
         self.popup_mode = PopupMode::TaskFilePicker;
-        self.popup.show("Task Files (.impl)", items, 0);
+        self.popup
+            .show("Task Files (.impl)", items, 0, PopupPosition::Center);
     }
 
     fn show_buffer_picker(&mut self) {
@@ -3558,7 +3727,8 @@ impl Repl {
             })
             .collect();
         self.popup_mode = PopupMode::Buffers;
-        self.popup.show("Buffers", items, self.active_buffer);
+        self.popup
+            .show("Buffers", items, self.active_buffer, PopupPosition::Center);
     }
 
     fn load_file_to_buffer(&mut self, path: &str, stdout: &mut io::Stdout) -> anyhow::Result<()> {
