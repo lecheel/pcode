@@ -63,6 +63,8 @@ pub struct ServerConfig {
     pub api_key: Option<String>,
     #[serde(default = "default_num_ctx")]
     pub num_ctx: u64,
+    #[serde(default = "default_api_type")]
+    pub api_type: String,
 }
 
 impl Default for ServerConfig {
@@ -73,6 +75,7 @@ impl Default for ServerConfig {
             timeout: default_timeout(),
             api_key: None,
             num_ctx: default_num_ctx(),
+            api_type: default_api_type(),
         }
     }
 }
@@ -82,6 +85,9 @@ fn default_base_url() -> String {
 }
 fn default_model() -> String {
     "qwen3:32b".into()
+}
+fn default_api_type() -> String {
+    "openai".into()
 }
 fn default_timeout() -> u64 {
     120

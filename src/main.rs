@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
         config.server.timeout,
         config.server.api_key.clone(),
         config.server.num_ctx,
+        config.server.api_type.clone(),
     );
     let bin_path = config.tools.codex_eyes_binary.clone();
     let agent = agent::PatchAgent::new(client, bin_path, config.clone());
