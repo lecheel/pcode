@@ -1310,6 +1310,29 @@ impl Repl {
                 self.ensure_cursor_visible();
                 self.count = None;
             }
+            KeyCode::Char('K') => {
+                if let Some(word) = self.get_word_under_cursor() {
+                    let cmd = format!("rg {}", word);
+                    let result = self.execute_command(&cmd, stdout)?;
+                    match result {
+                        CommandResult::Quit => {
+                            self.editor.save_history(&self.config.repl.history_file);
+                            self.cmd_editor
+                                .save_history(&self.config.repl.command_history_file);
+                            if let Some(handle) = self.agent_handle.take() {
+                                handle.abort();
+                            }
+                            return Err(anyhow::anyhow!("__QUIT__"));
+                        }
+                        CommandResult::ClearScreen => {
+                            self.buffer_mut().clear();
+                            self.push_line("Screen cleared.", LineStyle::Dim);
+                        }
+                        CommandResult::Continue => {}
+                    }
+                }
+                self.count = None;
+            }
             KeyCode::Char('G') => {
                 if self.count.is_some() {
                     let target = amount.saturating_sub(1);
@@ -1413,6 +1436,39 @@ impl Repl {
         }
         self.pending = None;
         self.render(stdout)
+    }
+
+    fn get_word_under_cursor(&self) -> Option<String> {
+        let line_idx = self.buffer().cursor_line();
+        let col_idx = self.buffer().cursor_col();
+        let line = self.buffer().lines().get(line_idx)?;
+        let content = line.content();
+        let chars: Vec<char> = content.chars().collect();
+        if chars.is_empty() {
+            return None;
+        }
+        let col = col_idx.min(chars.len().saturating_sub(1));
+
+        if !chars[col].is_alphanumeric() && chars[col] != '_' {
+            return None;
+        }
+
+        let mut start = col;
+        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+            start -= 1;
+        }
+
+        let mut end = col;
+        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+            end += 1;
+        }
+
+        let word: String = chars[start..end].iter().collect();
+        if word.is_empty() {
+            None
+        } else {
+            Some(word)
+        }
     }
 
     fn handle_insert_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
@@ -2675,6 +2731,7 @@ impl Repl {
             ("F12", "Cancel running agent task"),
             ("j / k", "Scroll down / up"),
             ("G", "Go to bottom (5G → line 5)"),
+            ("K", "Grep word under cursor"),
             ("gg", "Go to top"),
             ("yy", "Yank line to clipboard"),
             ("dd (5dd)", "Delete line (5 lines)"),
