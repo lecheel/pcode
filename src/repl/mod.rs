@@ -3526,16 +3526,17 @@ impl Repl {
                     style::ResetColor,
                 )?;
 
-                // Print each segment with its own color
+                // Print each segment with its own color.
+                // FIX: Move SetAttribute BEFORE setting colors so it doesn't wipe them out.
                 for (text, style) in &vrow.segments {
                     queue!(
                         stdout,
-                        SetForegroundColor(style.fg_color()),
                         if style.is_bold() {
                             SetAttribute(Attribute::Bold)
                         } else {
                             SetAttribute(Attribute::Reset)
                         },
+                        SetForegroundColor(style.fg_color()),
                         Print(text),
                         style::ResetColor,
                         SetAttribute(Attribute::Reset)
@@ -3620,17 +3621,14 @@ impl Repl {
                     )?;
 
                     if vrow.segments.is_empty() {
-                        let in_hl = if is_visual_line {
-                            vrow.logical_line >= sl && vrow.logical_line <= el
-                        } else {
-                            vrow.logical_line > sl && vrow.logical_line < el
-                        };
+                        // Simplified condition: highlight empty lines if they are within the selection bounds
+                        let in_hl = vrow.logical_line >= sl && vrow.logical_line <= el;
                         if in_hl {
                             queue!(
                                 stdout,
                                 SetBackgroundColor(Color::Cyan),
                                 Print(" ".repeat(width)),
-                                style::ResetColor
+                                crossterm::style::ResetColor
                             )?;
                         }
                         continue;
@@ -3649,31 +3647,33 @@ impl Repl {
                                 start_cond && end_cond
                             };
 
+                            // FIX: SetAttribute must be called BEFORE SetBackgroundColor/SetForegroundColor
+                            // so that Attribute::Reset doesn't clear the newly applied colors.
                             if in_hl {
                                 queue!(
                                     stdout,
-                                    SetBackgroundColor(Color::Cyan),
-                                    SetForegroundColor(Color::Black),
                                     if style.is_bold() {
                                         SetAttribute(Attribute::Bold)
                                     } else {
                                         SetAttribute(Attribute::Reset)
                                     },
-                                    Print(ch),
-                                    style::ResetColor,
+                                    SetBackgroundColor(Color::Cyan),
+                                    SetForegroundColor(Color::Black),
+                                    Print(ch.to_string()),
+                                    crossterm::style::ResetColor,
                                     SetAttribute(Attribute::Reset)
                                 )?;
                             } else {
                                 queue!(
                                     stdout,
-                                    SetForegroundColor(style.fg_color()),
                                     if style.is_bold() {
                                         SetAttribute(Attribute::Bold)
                                     } else {
                                         SetAttribute(Attribute::Reset)
                                     },
-                                    Print(ch),
-                                    style::ResetColor,
+                                    SetForegroundColor(style.fg_color()),
+                                    Print(ch.to_string()),
+                                    crossterm::style::ResetColor,
                                     SetAttribute(Attribute::Reset)
                                 )?;
                             }
