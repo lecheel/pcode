@@ -2958,7 +2958,7 @@ impl Repl {
                 _ => "Wait".to_string(),
             };
             format!(
-                " {} {} {} ⏳ {:.1}s │ {} │ {} {} {}",
+                " {} {} {} ⏳ {:.1}s │ {} │ {} {} │ {}[{}] {}",
                 self.spinner_char,
                 mode_str,
                 buffer_info,
@@ -2966,12 +2966,20 @@ impl Repl {
                 detail,
                 skill.emoji,
                 skill.name,
+                self.config.server.model,
+                self.config.server.api_type,
                 git_info
             )
         } else {
             format!(
-                " {} {} │ {} {} │ {} {}",
-                mode_str, buffer_info, skill.emoji, skill.name, self.config.server.model, git_info
+                " {} {} │ {} {} │ {}[{}] {}",
+                mode_str,
+                buffer_info,
+                skill.emoji,
+                skill.name,
+                self.config.server.model,
+                self.config.server.api_type,
+                git_info
             )
         };
         queue!(
