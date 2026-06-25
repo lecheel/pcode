@@ -2937,7 +2937,10 @@ impl Repl {
         } else {
             format!(" {} ", self.cached_git_info)
         };
-        let status_text = if self.waiting {
+
+        // Build colored status bar segments: (text, foreground_color)
+        let mut segments: Vec<(String, Color)> = Vec::new();
+        if self.waiting {
             let elapsed = self
                 .thinking_start
                 .map(|t| t.elapsed().as_secs_f32())
@@ -2957,46 +2960,50 @@ impl Repl {
                     .collect(),
                 _ => "Wait".to_string(),
             };
-            format!(
-                " {} {} {} ⏳ {:.1}s │ {} │ {} {} │ {}[{}] {}",
-                self.spinner_char,
-                mode_str,
-                buffer_info,
-                elapsed,
-                detail,
-                skill.emoji,
-                skill.name,
-                self.config.server.model,
-                self.config.server.api_type,
-                git_info
-            )
+            segments.push((format!(" {} ", self.spinner_char), Color::Yellow));
+            segments.push((mode_str.to_string(), mode_color));
+            segments.push((format!(" {} ", buffer_info), Color::Cyan));
+            segments.push((format!(" ⏳ {:.1}s", elapsed), Color::Yellow));
+            segments.push((" │ ".to_string(), Color::Grey));
+            segments.push((detail, Color::Yellow));
+            segments.push((" │ ".to_string(), Color::Grey));
+            segments.push((format!("{} {}", skill.emoji, skill.name), Color::Green));
+            segments.push((" │ ".to_string(), Color::Grey));
+            segments.push((self.config.server.model.clone(), Color::White));
+            segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
+            if !git_info.is_empty() {
+                segments.push((git_info, Color::Green));
+            }
         } else {
-            format!(
-                " {} {} │ {} {} │ {}[{}] {}",
-                mode_str,
-                buffer_info,
-                skill.emoji,
-                skill.name,
-                self.config.server.model,
-                self.config.server.api_type,
-                git_info
-            )
-        };
+            segments.push((format!(" {} ", mode_str), mode_color));
+            segments.push((buffer_info, Color::Cyan));
+            segments.push((" │ ".to_string(), Color::Grey));
+            segments.push((format!("{} {}", skill.emoji, skill.name), Color::Green));
+            segments.push((" │ ".to_string(), Color::Grey));
+            segments.push((self.config.server.model.clone(), Color::White));
+            segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
+            if !git_info.is_empty() {
+                segments.push((git_info, Color::Green));
+            }
+        }
         queue!(
             stdout,
             terminal::Clear(ClearType::CurrentLine),
             SetBackgroundColor(Color::DarkGrey),
-            SetForegroundColor(mode_color),
             SetAttribute(Attribute::Bold),
-            Print(&status_text),
         )?;
+        let mut total_width = 0usize;
+        for (text, color) in &segments {
+            total_width += UnicodeWidthStr::width(text.as_str());
+            queue!(stdout, SetForegroundColor(*color), Print(text.as_str()))?;
+        }
         let width = self.term_width().saturating_sub(1);
-        let text_width = UnicodeWidthStr::width(status_text.as_str());
-        let remaining = width.saturating_sub(text_width);
+        let remaining = width.saturating_sub(total_width);
         if remaining > 0 {
             queue!(stdout, Print(" ".repeat(remaining)))?;
         }
         queue!(stdout, style::ResetColor, SetAttribute(Attribute::Reset))?;
+
         let input_y = self.height - 1;
         let (prompt, editor, cursor_col) = match self.mode {
             Mode::Insert => (">", &self.editor, self.editor.cursor_display_col()),
