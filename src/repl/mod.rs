@@ -91,6 +91,8 @@ pub struct Repl {
     pending_reset_target: Option<String>,
     fkey_help: bool,
     selection_start: Option<(usize, usize)>,
+    last_visual_mode: Option<Mode>,
+    pending_snippet: Option<String>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -139,6 +141,8 @@ impl Repl {
             cached_git_info: String::new(),
             fkey_help: false,
             selection_start: None,
+            last_visual_mode: None,
+            pending_snippet: None,
         }
     }
 
@@ -772,6 +776,19 @@ impl Repl {
                 self.mode = Mode::Normal;
                 self.selection_start = None;
             }
+            KeyCode::Char('>') => {
+                self.grab_selection_to_chat();
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char(':') => {
+                self.mode = Mode::Command;
+                self.cmd_editor.clear();
+                self.count = None;
+                self.pending = None;
+                self.render_spinner_only(stdout)?;
+                return Ok(());
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.buffer_mut().move_down(1);
                 self.ensure_cursor_visible();
@@ -841,7 +858,8 @@ impl Repl {
     fn yank_selection(&mut self) {
         if let Some(start) = self.selection_start {
             let end = (self.buffer().cursor_line(), self.buffer().cursor_col());
-            let text = self.extract_text(start, end);
+            let is_line_wise = matches!(self.mode, Mode::VisualLine);
+            let text = self.extract_text(start, end, is_line_wise);
             if !text.is_empty() {
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
                     Ok(_) => self.push_info(
@@ -860,7 +878,8 @@ impl Repl {
     fn delete_selection(&mut self) {
         if let Some(start) = self.selection_start {
             let end = (self.buffer().cursor_line(), self.buffer().cursor_col());
-            let text = self.extract_text(start, end);
+            let is_line_wise = matches!(self.mode, Mode::VisualLine);
+            let text = self.extract_text(start, end, is_line_wise);
             if !text.is_empty() {
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
                     Ok(_) => {}
@@ -875,7 +894,12 @@ impl Repl {
         }
     }
 
-    fn extract_text(&self, start: (usize, usize), end: (usize, usize)) -> String {
+    fn extract_text(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+        is_line_wise: bool,
+    ) -> String {
         let (mut sl, mut sc) = start;
         let (mut el, mut ec) = end;
         if (sl, sc) > (el, ec) {
@@ -1681,6 +1705,7 @@ impl Repl {
             }
             KeyCode::Char('v') => {
                 self.mode = Mode::Visual;
+                self.last_visual_mode = Some(Mode::Visual);
                 self.selection_start =
                     Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
                 self.count = None;
@@ -1690,6 +1715,7 @@ impl Repl {
             }
             KeyCode::Char('V') => {
                 self.mode = Mode::VisualLine;
+                self.last_visual_mode = Some(Mode::VisualLine);
                 self.selection_start =
                     Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
                 self.count = None;
@@ -1890,10 +1916,17 @@ impl Repl {
     fn submit_input(&mut self, stdout: &mut io::Stdout, input: String) -> anyhow::Result<()> {
         if input.trim().is_empty() {
             self.mode = Mode::Normal;
+            if self.pending_snippet.take().is_some() {
+                self.push_llm_line("  [cancelled addition]", LineStyle::Dim);
+            }
             self.render(stdout)?;
             return Ok(());
         }
-        if input.starts_with(':') {
+
+        let snippet = self.pending_snippet.take();
+        let is_addition = snippet.is_some();
+
+        if !is_addition && input.starts_with(':') {
             self.editor.save_history(&self.config.repl.history_file);
             let cmd = input.trim_start_matches(':').trim().to_string();
             self.mode = Mode::Normal;
@@ -1917,7 +1950,14 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
-        let input_lower = input.to_lowercase();
+
+        let final_input = if let Some(s) = snippet {
+            format!("{}\n\n{}", s, input)
+        } else {
+            input
+        };
+
+        let input_lower = final_input.to_lowercase();
 
         let code_keywords = [
             "impl ",
@@ -1945,7 +1985,7 @@ impl Repl {
                 );
             } else {
                 let ts = Self::get_timestamp();
-                self.push_llm_line(format!("[{}] > {}", ts, input), LineStyle::User);
+                self.push_llm_line(format!("[{}] > {}", ts, final_input), LineStyle::User);
                 self.push_llm_line(
                     "  ⛔ Blocked: You are in 'Chat' mode (no tools available).",
                     LineStyle::Error,
@@ -1971,7 +2011,7 @@ impl Repl {
         let ts = Self::get_timestamp();
         let llm_idx = self.llm_buffer_idx();
         self.buffers[llm_idx].push(BufferLine::new(
-            format!("[{}] > {}", ts, input),
+            format!("[{}] > {}", ts, final_input),
             LineStyle::User,
         ));
         self.active_buffer = llm_idx;
@@ -1990,7 +2030,7 @@ impl Repl {
         self.event_rx = Some(rx);
         let (result_tx, result_rx) = tokio::sync::oneshot::channel::<(PatchAgent, String)>();
         let handle = tokio::task::spawn(async move {
-            let response = agent.run_cycle(&input, cancel_rx).await;
+            let response = agent.run_cycle(&final_input, cancel_rx).await;
             let _ = result_tx.send((agent, response));
         });
         self.agent_rx = Some(result_rx);
@@ -2021,6 +2061,9 @@ impl Repl {
                 } else {
                     self.push_command_info("  Nothing to cancel.", LineStyle::Dim);
                 }
+            }
+            "llm" => {
+                self.grab_selection_to_chat();
             }
             "h" | "help" | "?" => {
                 self.push_help();
@@ -3297,8 +3340,13 @@ impl Repl {
         queue!(stdout, style::ResetColor, SetAttribute(Attribute::Reset))?;
 
         let input_y = self.height - 1;
+        let is_addition = self.pending_snippet.is_some();
         let (prompt, editor, cursor_col) = match self.mode {
-            Mode::Insert => (">", &self.editor, self.editor.cursor_display_col()),
+            Mode::Insert => (
+                if is_addition { ">>" } else { ">" },
+                &self.editor,
+                self.editor.cursor_display_col(),
+            ),
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
@@ -3565,7 +3613,28 @@ impl Repl {
 
                     let y_pos = (i - vscroll) as u16;
                     let x_pos = self.gutter_width() as u16;
-                    queue!(stdout, cursor::MoveTo(x_pos, y_pos))?;
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(x_pos, y_pos),
+                        terminal::Clear(ClearType::UntilNewLine)
+                    )?;
+
+                    if vrow.segments.is_empty() {
+                        let in_hl = if is_visual_line {
+                            vrow.logical_line >= sl && vrow.logical_line <= el
+                        } else {
+                            vrow.logical_line > sl && vrow.logical_line < el
+                        };
+                        if in_hl {
+                            queue!(
+                                stdout,
+                                SetBackgroundColor(Color::Cyan),
+                                Print(" ".repeat(width)),
+                                style::ResetColor
+                            )?;
+                        }
+                        continue;
+                    }
 
                     let mut current_col = vrow.start_col;
                     for (text, style) in &vrow.segments {
@@ -3583,8 +3652,8 @@ impl Repl {
                             if in_hl {
                                 queue!(
                                     stdout,
-                                    SetBackgroundColor(Color::Blue),
-                                    SetForegroundColor(style.fg_color()),
+                                    SetBackgroundColor(Color::Cyan),
+                                    SetForegroundColor(Color::Black),
                                     if style.is_bold() {
                                         SetAttribute(Attribute::Bold)
                                     } else {
@@ -4262,6 +4331,39 @@ impl Repl {
             }
         }
         self.render(stdout)
+    }
+
+    fn grab_selection_to_chat(&mut self) {
+        if let Some(start) = self.selection_start {
+            let end = (self.buffer().cursor_line(), self.buffer().cursor_col());
+            let is_line_wise = matches!(self.last_visual_mode, Some(Mode::VisualLine));
+            let text = self.extract_text(start, end, is_line_wise);
+            self.selection_start = None;
+
+            // Switch to the LLM chat buffer
+            let idx = self.llm_buffer_idx();
+            self.active_buffer = idx;
+
+            // Enter Insert mode and prepare the editor
+            self.mode = Mode::Insert;
+            self.editor.clear();
+
+            self.pending_snippet = Some(text.clone());
+
+            // Push the marker to the LLM buffer
+            self.push_llm_line("```".to_string(), LineStyle::Info);
+            for line in text.lines() {
+                self.push_llm_line(line.to_string(), LineStyle::Dim);
+            }
+            self.push_llm_line("```".to_string(), LineStyle::Info);
+
+            self.scroll_to_bottom();
+        } else {
+            let idx = self.llm_buffer_idx();
+            self.active_buffer = idx;
+            self.mode = Mode::Insert;
+            self.editor.clear();
+        }
     }
 }
 
