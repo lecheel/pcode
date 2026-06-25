@@ -18,7 +18,7 @@ fn print_help() {
     eprintln!("  pl                       Start REPL with default config");
     eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
-    eprintln!("  pl <file>                Start REPL and open file for patching");
+    eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
     eprintln!("  pl --help                Show this help message");
