@@ -30,9 +30,9 @@ const COMMAND_LIST: &[&str] = &[
 struct TerminalGuard;
 impl TerminalGuard {
     fn init(stdout: &mut io::Stdout) -> anyhow::Result<Self> {
-        terminal::enable_raw_mode()?;
-        execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
-        Ok(Self)
+        let _ = terminal::enable_raw_mode();
+        let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
+        Ok(TerminalGuard)
     }
 }
 impl Drop for TerminalGuard {
@@ -90,6 +90,7 @@ pub struct Repl {
     cached_git_info: String,
     pending_reset_target: Option<String>,
     fkey_help: bool,
+    selection_start: Option<(usize, usize)>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -137,6 +138,7 @@ impl Repl {
             pending_reset_target: None,
             cached_git_info: String::new(),
             fkey_help: false,
+            selection_start: None,
         }
     }
 
@@ -550,6 +552,7 @@ impl Repl {
                 Mode::Insert => self.handle_insert_key(key, stdout)?,
                 Mode::Command => self.handle_command_key(key, stdout)?,
                 Mode::Search => self.handle_search_key(key, stdout)?,
+                Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
             }
             return Ok(());
         }
@@ -719,6 +722,7 @@ impl Repl {
             Mode::Insert => self.handle_insert_key(key, stdout)?,
             Mode::Command => self.handle_command_key(key, stdout)?,
             Mode::Search => self.handle_search_key(key, stdout)?,
+            Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
         }
         Ok(())
     }
@@ -740,6 +744,251 @@ impl Repl {
             _ => return Ok(()),
         }
         self.render(stdout)
+    }
+
+    fn handle_visual_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if key.code == KeyCode::Char('c') {
+                self.mode = Mode::Normal;
+                self.selection_start = None;
+                self.render(stdout)?;
+                return Ok(());
+            }
+            match key.code {
+                KeyCode::Char('d') => self.half_page_down(),
+                KeyCode::Char('u') => self.half_page_up(),
+                KeyCode::Char('b') => self.half_page_up(),
+                KeyCode::Char('f') => self.half_page_down(),
+                _ => {}
+            }
+            self.count = None;
+            self.pending = None;
+            self.render(stdout)?;
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.selection_start = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.buffer_mut().move_down(1);
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.buffer_mut().move_up(1);
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.buffer_mut().move_left();
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.buffer_mut().move_right();
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('w') => {
+                self.buffer_mut().move_right();
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('b') => {
+                self.buffer_mut().move_left();
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('0') => {
+                let line_idx = self.buffer().cursor_line();
+                self.buffer_mut().set_cursor(line_idx, 0);
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('$') => {
+                let line_idx = self.buffer().cursor_line();
+                if let Some(line) = self.buffer().lines().get(line_idx) {
+                    let len = line.content().chars().count();
+                    let col = if len > 0 { len - 1 } else { 0 };
+                    self.buffer_mut().set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
+            }
+            KeyCode::Char('G') => {
+                self.move_bottom();
+            }
+            KeyCode::Char('g') => {
+                if self.pending == Some('g') {
+                    self.buffer_mut().move_top();
+                    self.pending = None;
+                } else {
+                    self.pending = Some('g');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+            KeyCode::Char('y') => {
+                self.yank_selection();
+                self.mode = Mode::Normal;
+                self.selection_start = None;
+            }
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                self.delete_selection();
+                self.mode = Mode::Normal;
+                self.selection_start = None;
+            }
+            _ => {}
+        }
+        self.render(stdout)
+    }
+
+    fn yank_selection(&mut self) {
+        if let Some(start) = self.selection_start {
+            let end = (self.buffer().cursor_line(), self.buffer().cursor_col());
+            let text = self.extract_text(start, end);
+            if !text.is_empty() {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+                    Ok(_) => self.push_info(
+                        "  📋 Yanked selection to clipboard".to_string(),
+                        LineStyle::Dim,
+                    ),
+                    Err(e) => {
+                        self.push_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error)
+                    }
+                }
+                self.scroll_to_bottom_view();
+            }
+        }
+    }
+
+    fn delete_selection(&mut self) {
+        if let Some(start) = self.selection_start {
+            let end = (self.buffer().cursor_line(), self.buffer().cursor_col());
+            let text = self.extract_text(start, end);
+            if !text.is_empty() {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.push_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error)
+                    }
+                }
+                self.delete_text(start, end);
+                self.push_info("  🗑️  Deleted selection".to_string(), LineStyle::Dim);
+                self.scroll_to_bottom_view();
+            }
+        }
+    }
+
+    fn extract_text(&self, start: (usize, usize), end: (usize, usize)) -> String {
+        let (mut sl, mut sc) = start;
+        let (mut el, mut ec) = end;
+        if (sl, sc) > (el, ec) {
+            std::mem::swap(&mut sl, &mut el);
+            std::mem::swap(&mut sc, &mut ec);
+        }
+
+        let mut text = String::new();
+        if matches!(self.mode, Mode::VisualLine) {
+            for i in sl..=el {
+                if let Some(line) = self.buffer().lines().get(i) {
+                    text.push_str(&line.content());
+                    text.push('\n');
+                }
+            }
+        } else {
+            for i in sl..=el {
+                if let Some(line) = self.buffer().lines().get(i) {
+                    let content: Vec<char> = line.content().chars().collect();
+                    if i == sl && i == el {
+                        let end_idx = (ec + 1).min(content.len());
+                        if sc < end_idx {
+                            for c in &content[sc..end_idx] {
+                                text.push(*c);
+                            }
+                        }
+                    } else if i == sl {
+                        if sc < content.len() {
+                            for c in &content[sc..] {
+                                text.push(*c);
+                            }
+                        }
+                        text.push('\n');
+                    } else if i == el {
+                        let end_idx = (ec + 1).min(content.len());
+                        for c in &content[..end_idx] {
+                            text.push(*c);
+                        }
+                    } else {
+                        text.push_str(&line.content());
+                        text.push('\n');
+                    }
+                }
+            }
+        }
+        text
+    }
+
+    fn delete_text(&mut self, start: (usize, usize), end: (usize, usize)) {
+        let (mut sl, mut sc) = start;
+        let (mut el, mut ec) = end;
+        if (sl, sc) > (el, ec) {
+            std::mem::swap(&mut sl, &mut el);
+            std::mem::swap(&mut sc, &mut ec);
+        }
+
+        if matches!(self.mode, Mode::VisualLine) {
+            self.buffer_mut().remove_lines(sl, el + 1);
+            let new_len = self.buffer().len();
+            if sl < new_len {
+                self.buffer_mut().set_cursor(sl, 0);
+            } else if new_len > 0 {
+                self.buffer_mut().set_cursor(new_len - 1, 0);
+            }
+        } else {
+            let mut new_lines = Vec::new();
+            let lines = self.buffer().lines();
+            for i in 0..lines.len() {
+                if i < sl || i > el {
+                    new_lines.push(lines[i].clone());
+                    continue;
+                }
+                let chars_count = lines[i].content().chars().count();
+
+                if i == sl && i == el {
+                    let end_idx = (ec + 1).min(chars_count);
+                    let new_line = splice_line(&lines[i], sc, end_idx);
+                    if !new_line.content().is_empty() {
+                        new_lines.push(new_line);
+                    }
+                } else if i == sl {
+                    let new_line = splice_line(&lines[i], sc, chars_count);
+                    if !new_line.content().is_empty() {
+                        new_lines.push(new_line);
+                    }
+                } else if i == el {
+                    let end_idx = (ec + 1).min(chars_count);
+                    let new_line = splice_line(&lines[i], 0, end_idx);
+                    if !new_line.content().is_empty() {
+                        new_lines.push(new_line);
+                    }
+                }
+            }
+
+            let cur_len = self.buffer().len();
+            self.buffer_mut().remove_lines(0, cur_len);
+            for l in new_lines {
+                self.buffer_mut().push(l);
+            }
+
+            let target_line = sl.min(self.buffer().len().saturating_sub(1));
+            if target_line < self.buffer().len() {
+                let max_col = self.buffer().lines()[target_line]
+                    .content()
+                    .chars()
+                    .count()
+                    .saturating_sub(1);
+                self.buffer_mut()
+                    .set_cursor(target_line, sc.saturating_sub(1).min(max_col));
+            } else if self.buffer().len() > 0 {
+                self.buffer_mut().set_cursor(0, 0);
+            }
+        }
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent, stdout: &mut io::Stdout) -> anyhow::Result<()> {
@@ -1429,6 +1678,24 @@ impl Repl {
                     self.render(stdout)?;
                     return Ok(());
                 }
+            }
+            KeyCode::Char('v') => {
+                self.mode = Mode::Visual;
+                self.selection_start =
+                    Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('V') => {
+                self.mode = Mode::VisualLine;
+                self.selection_start =
+                    Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
+                return Ok(());
             }
             _ => {
                 self.count = None;
@@ -3035,6 +3302,7 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
+            Mode::Visual | Mode::VisualLine => (" ", &self.editor, 0),
         };
         let input_text = format!("{}{}", prompt, editor.content());
         queue!(
@@ -3046,7 +3314,7 @@ impl Repl {
             style::ResetColor
         )?;
         match self.mode {
-            Mode::Normal => {
+            Mode::Normal | Mode::Visual | Mode::VisualLine => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
@@ -3227,8 +3495,13 @@ impl Repl {
                 }
             }
         }
+
+        // -----------------------------------------------------------------
+        // REPLACED BLOCK – now handles both normal and visual selection
+        // -----------------------------------------------------------------
         let cursor_line_idx = self.buffer().cursor_line();
         let cursor_col_idx = self.buffer().cursor_col();
+
         if matches!(self.mode, Mode::Normal) && !self.popup.active {
             for (i, vrow) in visual_rows.iter().enumerate() {
                 if i < vscroll || i >= vscroll + ra_height {
@@ -3275,7 +3548,74 @@ impl Repl {
                     break;
                 }
             }
+        } else if matches!(self.mode, Mode::Visual | Mode::VisualLine) && !self.popup.active {
+            if let Some(start) = self.selection_start {
+                let end = (cursor_line_idx, cursor_col_idx);
+                let (sl, sc) = if start <= end { start } else { end };
+                let (el, ec) = if start <= end { end } else { start };
+                let is_visual_line = matches!(self.mode, Mode::VisualLine);
+
+                for (i, vrow) in visual_rows.iter().enumerate() {
+                    if i < vscroll || i >= vscroll + ra_height {
+                        continue;
+                    }
+                    if vrow.logical_line < sl || vrow.logical_line > el {
+                        continue;
+                    }
+
+                    let y_pos = (i - vscroll) as u16;
+                    let x_pos = self.gutter_width() as u16;
+                    queue!(stdout, cursor::MoveTo(x_pos, y_pos))?;
+
+                    let mut current_col = vrow.start_col;
+                    for (text, style) in &vrow.segments {
+                        for ch in text.chars() {
+                            let in_hl = if is_visual_line {
+                                true
+                            } else {
+                                let start_cond = vrow.logical_line > sl
+                                    || (vrow.logical_line == sl && current_col >= sc);
+                                let end_cond = vrow.logical_line < el
+                                    || (vrow.logical_line == el && current_col <= ec);
+                                start_cond && end_cond
+                            };
+
+                            if in_hl {
+                                queue!(
+                                    stdout,
+                                    SetBackgroundColor(Color::Blue),
+                                    SetForegroundColor(style.fg_color()),
+                                    if style.is_bold() {
+                                        SetAttribute(Attribute::Bold)
+                                    } else {
+                                        SetAttribute(Attribute::Reset)
+                                    },
+                                    Print(ch),
+                                    style::ResetColor,
+                                    SetAttribute(Attribute::Reset)
+                                )?;
+                            } else {
+                                queue!(
+                                    stdout,
+                                    SetForegroundColor(style.fg_color()),
+                                    if style.is_bold() {
+                                        SetAttribute(Attribute::Bold)
+                                    } else {
+                                        SetAttribute(Attribute::Reset)
+                                    },
+                                    Print(ch),
+                                    style::ResetColor,
+                                    SetAttribute(Attribute::Reset)
+                                )?;
+                            }
+                            current_col += 1;
+                        }
+                    }
+                }
+            }
         }
+        // -----------------------------------------------------------------
+
         self.render_spinner_only(stdout)?;
         if self.popup.active {
             self.popup.render(stdout, self.width, self.height)?;
@@ -4029,4 +4369,22 @@ fn unquote(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn splice_line(line: &BufferLine, start_char: usize, end_char: usize) -> BufferLine {
+    let mut new_segments = Vec::new();
+    let mut current_char = 0;
+    for (text, style) in &line.segments {
+        let mut current_text = String::new();
+        for ch in text.chars() {
+            if current_char < start_char || current_char >= end_char {
+                current_text.push(ch);
+            }
+            current_char += 1;
+        }
+        if !current_text.is_empty() {
+            new_segments.push((current_text, *style));
+        }
+    }
+    BufferLine::from_segments(new_segments)
 }

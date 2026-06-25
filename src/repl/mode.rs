@@ -4,6 +4,8 @@ pub enum Mode {
     Insert,
     Command,
     Search,
+    Visual,
+    VisualLine,
 }
 impl Mode {
     pub fn as_str(&self) -> &'static str {
@@ -12,6 +14,8 @@ impl Mode {
             Mode::Insert => "INSERT",
             Mode::Command => "COMMAND",
             Mode::Search => "SEARCH",
+            Mode::Visual => "VISUAL",
+            Mode::VisualLine => "VISUAL LINE",
         }
     }
     pub fn status_color(&self) -> crossterm::style::Color {
@@ -20,6 +24,8 @@ impl Mode {
             Mode::Insert => crossterm::style::Color::Cyan,
             Mode::Command => crossterm::style::Color::Yellow,
             Mode::Search => crossterm::style::Color::Magenta,
+            Mode::Visual => crossterm::style::Color::Blue,
+            Mode::VisualLine => crossterm::style::Color::Blue,
         }
     }
 }
