@@ -15,22 +15,24 @@ use config::AppConfig;
 fn print_help() {
     eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
-    eprintln!("  pl                Start REPL with default config");
-    eprintln!("  pl <config.toml>  Start REPL with custom config");
-    eprintln!("  pl <todo.md>      Start REPL and auto-submit todo task");
-    eprintln!("  pl -q             Quick switch via mswitch binary");
-    eprintln!("  pl -s             Run 'cli sync' and exit");
-    eprintln!("  pl --help         Show this help message");
+    eprintln!("  pl                       Start REPL with default config");
+    eprintln!("  pl -c <config.toml>      Start REPL with custom config");
+    eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
+    eprintln!("  pl <file>                Start REPL and open file for patching");
+    eprintln!("  pl -q                    Quick switch via mswitch binary");
+    eprintln!("  pl -s                    Run 'cli sync' and exit");
+    eprintln!("  pl --help                Show this help message");
 }
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config_path = None;
     let mut initial_prompt = None;
-    if let Some(arg) = std::env::args().nth(1) {
+
+    let mut args = std::env::args().skip(1).peekable();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "-q" | "--quickswitch" => {
-                let extra_args: Vec<String> = std::env::args().skip(2).collect();
+                let extra_args: Vec<String> = args.collect();
                 let mut cmd = std::process::Command::new("mswitch");
                 for a in extra_args {
                     cmd.arg(a);
@@ -46,7 +48,7 @@ async fn main() -> Result<()> {
                 std::process::exit(0);
             }
             "-s" | "--sync" => {
-                let extra_args: Vec<String> = std::env::args().skip(2).collect();
+                let extra_args: Vec<String> = args.collect();
                 let mut cmd = std::process::Command::new("cli");
                 cmd.arg("sync");
                 for a in extra_args {
@@ -66,12 +68,29 @@ async fn main() -> Result<()> {
                 print_help();
                 std::process::exit(0);
             }
+            "-c" | "--config" => {
+                if let Some(p) = args.next() {
+                    config_path = Some(Path::new(&p).to_path_buf());
+                } else {
+                    eprintln!("Error: Missing argument for -c");
+                    std::process::exit(1);
+                }
+            }
+            "--todo" => {
+                if let Some(p) = args.next() {
+                    initial_prompt = Some(format!("Do the todo: {}", p));
+                } else {
+                    eprintln!("Error: Missing argument for --todo");
+                    std::process::exit(1);
+                }
+            }
             _ => {
                 let p = Path::new(&arg);
-                if p.extension().and_then(|e| e.to_str()) == Some("md") {
-                    initial_prompt = Some(format!("Do the todo: {}", arg));
-                } else {
+                if p.extension().and_then(|e| e.to_str()) == Some("toml") {
                     config_path = Some(p.to_path_buf());
+                } else {
+                    // default to open file for patching
+                    initial_prompt = Some(format!(":open {}", arg));
                 }
             }
         }

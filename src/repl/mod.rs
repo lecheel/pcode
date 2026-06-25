@@ -1626,7 +1626,32 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
+        if input.starts_with(':') {
+            self.editor.save_history(&self.config.repl.history_file);
+            let cmd = input.trim_start_matches(':').trim().to_string();
+            self.mode = Mode::Normal;
+            let result = self.execute_command(&cmd, stdout)?;
+            match result {
+                CommandResult::Quit => {
+                    self.editor.save_history(&self.config.repl.history_file);
+                    self.cmd_editor
+                        .save_history(&self.config.repl.command_history_file);
+                    if let Some(handle) = self.agent_handle.take() {
+                        handle.abort();
+                    }
+                    return Err(anyhow::anyhow!("__QUIT__"));
+                }
+                CommandResult::ClearScreen => {
+                    self.buffer_mut().clear();
+                    self.push_line("Screen cleared.", LineStyle::Dim);
+                }
+                CommandResult::Continue => {}
+            }
+            self.render(stdout)?;
+            return Ok(());
+        }
         let input_lower = input.to_lowercase();
+
         let code_keywords = [
             "impl ",
             "create ",
@@ -3267,6 +3292,24 @@ impl Repl {
         }
     }
 
+    fn get_git_root(&self) -> Option<std::path::PathBuf> {
+        let repo_path = std::path::Path::new(&self.config.tools.project_root);
+        let output = std::process::Command::new("git")
+            .arg("rev-parse")
+            .arg("--show-toplevel")
+            .current_dir(repo_path)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path_str.is_empty() {
+            return None;
+        }
+        Some(std::path::PathBuf::from(path_str))
+    }
+
     fn get_git_gutter(&self) -> Option<Vec<char>> {
         let buffer_name = self.buffer().name();
         if buffer_name == "Chat"
@@ -3278,26 +3321,23 @@ impl Repl {
         {
             return None;
         }
-
-        let repo_path = std::path::Path::new(&self.config.tools.project_root);
-        let repo = match git2::Repository::discover(repo_path) {
+        let abs_git_root = self.get_git_root()?;
+        let repo = match git2::Repository::open(&abs_git_root) {
             Ok(r) => r,
             Err(_) => return None,
         };
-
-        let abs_repo_path = match repo_path.canonicalize() {
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let raw_path = std::path::Path::new(buffer_name);
+        let abs_file_path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            project_root.join(buffer_name)
+        };
+        let abs_file_path = match abs_file_path.canonicalize() {
             Ok(p) => p,
             Err(_) => return None,
         };
-
-        let path = std::path::Path::new(buffer_name);
-        let abs_file_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            abs_repo_path.join(path)
-        };
-
-        let rel_path = match abs_file_path.strip_prefix(&abs_repo_path) {
+        let rel_path = match abs_file_path.strip_prefix(&abs_git_root) {
             Ok(p) => p,
             Err(_) => return None,
         };
@@ -3662,25 +3702,27 @@ impl Repl {
         {
             return None;
         }
-        let repo_path = std::path::Path::new(&self.config.tools.project_root);
-        let repo = match git2::Repository::discover(repo_path) {
+        let abs_git_root = self.get_git_root()?;
+        let repo = match git2::Repository::open(&abs_git_root) {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let abs_repo_path = match repo_path.canonicalize() {
-            Ok(p) => p,
-            Err(_) => return None,
-        };
-        let path = std::path::Path::new(buffer_name);
-        let abs_file_path = if path.is_absolute() {
-            path.to_path_buf()
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let raw_path = std::path::Path::new(buffer_name);
+        let abs_file_path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
         } else {
-            abs_repo_path.join(path)
+            project_root.join(buffer_name)
         };
-        let rel_path = match abs_file_path.strip_prefix(&abs_repo_path) {
+        let abs_file_path = match abs_file_path.canonicalize() {
             Ok(p) => p,
             Err(_) => return None,
         };
+        let rel_path = match abs_file_path.strip_prefix(&abs_git_root) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+
         let mut content: String = self
             .buffer()
             .lines()
