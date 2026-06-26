@@ -1,6 +1,8 @@
 // src/repl/editor.rs
 
 use serde_json;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub struct LineEditor {
     buffer: String,
@@ -26,7 +28,7 @@ impl LineEditor {
     }
 
     pub fn cursor_display_col(&self) -> usize {
-        self.buffer[..self.cursor_pos].chars().count()
+        UnicodeWidthStr::width(&self.buffer[..self.cursor_pos])
     }
 
     pub fn is_empty(&self) -> bool {
@@ -43,7 +45,7 @@ impl LineEditor {
         self.history_index = None;
         if self.cursor_pos > 0 {
             let prev = self.buffer[..self.cursor_pos]
-                .char_indices()
+                .grapheme_indices(true)
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
@@ -56,9 +58,9 @@ impl LineEditor {
         self.history_index = None;
         if self.cursor_pos < self.buffer.len() {
             let next = self.buffer[self.cursor_pos..]
-                .char_indices()
-                .nth(1)
-                .map(|(i, _)| self.cursor_pos + i)
+                .grapheme_indices(true)
+                .next()
+                .map(|(_, g)| self.cursor_pos + g.len())
                 .unwrap_or(self.buffer.len());
             self.buffer.drain(self.cursor_pos..next);
         }
@@ -67,7 +69,7 @@ impl LineEditor {
     pub fn move_left(&mut self) {
         if self.cursor_pos > 0 {
             self.cursor_pos = self.buffer[..self.cursor_pos]
-                .char_indices()
+                .grapheme_indices(true)
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
@@ -77,9 +79,9 @@ impl LineEditor {
     pub fn move_right(&mut self) {
         if self.cursor_pos < self.buffer.len() {
             self.cursor_pos = self.buffer[self.cursor_pos..]
-                .char_indices()
-                .nth(1)
-                .map(|(i, _)| self.cursor_pos + i)
+                .grapheme_indices(true)
+                .next()
+                .map(|(_, g)| self.cursor_pos + g.len())
                 .unwrap_or(self.buffer.len());
         }
     }
@@ -163,20 +165,20 @@ impl LineEditor {
             return;
         }
         let first = *matches[0];
-        let mut longest_prefix_char_len = first.chars().count();
+        let mut longest_prefix_char_len = first.graphemes(true).count();
         for m in &matches[1..] {
             let m_str = **m;
             let common_char_len = first
-                .chars()
-                .zip(m_str.chars())
+                .graphemes(true)
+                .zip(m_str.graphemes(true))
                 .take_while(|(a, b)| a == b)
                 .count();
             longest_prefix_char_len = longest_prefix_char_len.min(common_char_len);
         }
-        let input_char_len = input.chars().count();
+        let input_char_len = input.graphemes(true).count();
         if longest_prefix_char_len > input_char_len {
             let byte_idx = first
-                .char_indices()
+                .grapheme_indices(true)
                 .nth(longest_prefix_char_len)
                 .map(|(i, _)| i)
                 .unwrap_or(first.len());

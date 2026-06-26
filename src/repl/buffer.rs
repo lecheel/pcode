@@ -1,5 +1,6 @@
 use crossterm::style::Color;
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LineStyle {
@@ -165,15 +166,15 @@ impl ResponseBuffer {
         let mut rows = Vec::new();
         for (line_idx, line) in self.lines.iter().enumerate() {
             // Flatten segments into characters with their styles
-            let mut chars: Vec<(char, LineStyle)> = Vec::new();
+            let mut graphemes: Vec<(&str, LineStyle)> = Vec::new();
             for (text, style) in &line.segments {
-                for ch in text.chars() {
-                    chars.push((ch, *style));
+                for g in text.graphemes(true) {
+                    graphemes.push((g, *style));
                 }
             }
 
             let mut col = 0;
-            if chars.is_empty() {
+            if graphemes.is_empty() {
                 // Ensure empty lines generate a visual row so the cursor
                 // doesn't jump to the top when navigating to them.
                 rows.push(VisualRow {
@@ -186,12 +187,22 @@ impl ResponseBuffer {
                     is_bold: false,
                 });
             } else {
-                while col < chars.len() {
-                    let end = (col + width).min(chars.len());
+                while col < graphemes.len() {
+                    let mut current_width = 0;
+                    let mut end = col;
+                    while end < graphemes.len() {
+                        let g_width = UnicodeWidthStr::width(graphemes[end].0);
+                        if current_width + g_width > width && end > col {
+                            break;
+                        }
+                        current_width += g_width;
+                        end += 1;
+                    }
+
                     let mut segments = Vec::new();
+                    let mut current_style = graphemes[col].1;
                     let mut current_text = String::new();
-                    let mut current_style = chars[col].1;
-                    for (ch, style) in &chars[col..end] {
+                    for (g, style) in &graphemes[col..end] {
                         if *style != current_style {
                             if !current_text.is_empty() {
                                 segments.push((current_text.clone(), current_style));
@@ -199,7 +210,7 @@ impl ResponseBuffer {
                             }
                             current_style = *style;
                         }
-                        current_text.push(*ch);
+                        current_text.push_str(g);
                     }
                     if !current_text.is_empty() {
                         segments.push((current_text.clone(), current_style));
@@ -211,8 +222,8 @@ impl ResponseBuffer {
                         segments,
                         start_col: col,
                         end_col: end,
-                        fg_color: chars[col].1.fg_color(),
-                        is_bold: chars[col].1.is_bold(),
+                        fg_color: graphemes[col].1.fg_color(),
+                        is_bold: graphemes[col].1.is_bold(),
                     });
                     col = end;
                 }
@@ -260,7 +271,7 @@ impl ResponseBuffer {
         } else if self.cursor_line > 0 {
             self.cursor_line -= 1;
             if let Some(line) = self.lines.get(self.cursor_line) {
-                self.cursor_col = line.content().chars().count().saturating_sub(1);
+                self.cursor_col = line.content().graphemes(true).count().saturating_sub(1);
             } else {
                 self.cursor_col = 0;
             }
@@ -271,7 +282,7 @@ impl ResponseBuffer {
             return;
         }
         if let Some(line) = self.lines.get(self.cursor_line) {
-            let max = line.content().chars().count().saturating_sub(1);
+            let max = line.content().graphemes(true).count().saturating_sub(1);
             if self.cursor_col < max {
                 self.cursor_col += 1;
             } else if self.cursor_line < self.lines.len() - 1 {
@@ -283,7 +294,11 @@ impl ResponseBuffer {
     pub fn set_cursor(&mut self, line: usize, col: usize) {
         if line < self.lines.len() {
             self.cursor_line = line;
-            let max = self.lines[line].content().chars().count().saturating_sub(1);
+            let max = self.lines[line]
+                .content()
+                .graphemes(true)
+                .count()
+                .saturating_sub(1);
             self.cursor_col = col.min(max);
         } else if self.lines.is_empty() {
             self.cursor_line = 0;
@@ -393,7 +408,7 @@ impl ResponseBuffer {
     }
     fn clamp_cursor_col(&mut self) {
         if let Some(line) = self.lines.get(self.cursor_line) {
-            let max_col = line.content().chars().count().saturating_sub(1);
+            let max_col = line.content().graphemes(true).count().saturating_sub(1);
             self.cursor_col = self.cursor_col.min(max_col);
         } else {
             self.cursor_col = 0;

@@ -475,7 +475,7 @@ impl Repl {
             KeyCode::Home => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content().chars().count();
+                    let len = line.content().graphemes(true).count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -485,7 +485,7 @@ impl Repl {
             KeyCode::End => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content().chars().count();
+                    let len = line.content().graphemes(true).count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -588,7 +588,7 @@ impl Repl {
             KeyCode::Char('$') => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content().chars().count();
+                    let len = line.content().graphemes(true).count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -758,27 +758,37 @@ impl Repl {
         let col_idx = self.buffer().cursor_col();
         let line = self.buffer().lines().get(line_idx)?;
         let content = line.content();
-        let chars: Vec<char> = content.chars().collect();
-        if chars.is_empty() {
+        let graphemes: Vec<&str> = content.graphemes(true).collect();
+        if graphemes.is_empty() {
             return None;
         }
-        let col = col_idx.min(chars.len().saturating_sub(1));
-
-        if !chars[col].is_alphanumeric() && chars[col] != '_' {
+        let col = col_idx.min(graphemes.len().saturating_sub(1));
+        let first_char = graphemes[col].chars().next().unwrap_or(' ');
+        if !first_char.is_alphanumeric() && first_char != '_' {
             return None;
         }
 
         let mut start = col;
-        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
-            start -= 1;
+        while start > 0 {
+            let c = graphemes[start - 1].chars().next().unwrap_or(' ');
+            if c.is_alphanumeric() || c == '_' {
+                start -= 1;
+            } else {
+                break;
+            }
         }
 
         let mut end = col;
-        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
-            end += 1;
+        while end < graphemes.len() {
+            let c = graphemes[end].chars().next().unwrap_or(' ');
+            if c.is_alphanumeric() || c == '_' {
+                end += 1;
+            } else {
+                break;
+            }
         }
 
-        let word: String = chars[start..end].iter().collect();
+        let word: String = graphemes[start..end].join("");
         if word.is_empty() {
             None
         } else {

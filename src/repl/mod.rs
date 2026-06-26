@@ -11,9 +11,7 @@ use crate::agent::{PatchAgent, SKILL_GROUPS};
 use crate::config::AppConfig;
 use buffer::{BufferLine, LineStyle, ResponseBuffer};
 use crossterm::{
-    cursor,
-    event,
-    execute, queue,
+    cursor, event, execute, queue,
     style::{self, Attribute, Color, Print, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType},
 };
@@ -21,6 +19,7 @@ use editor::LineEditor;
 use helper::Popup;
 use mode::Mode;
 use std::io::{self, Write};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 pub use misc::COMMAND_LIST;
@@ -504,10 +503,24 @@ impl Repl {
                         || visual_rows[i + 1].logical_line != cursor_line_idx);
                 if in_range || at_end {
                     let y_pos = (i - vscroll) as u16;
-                    let x_pos = (self.gutter_width() + cursor_col_idx - vrow.start_col) as u16;
+                    let mut x_offset = 0;
                     if in_range && vrow.start_col != vrow.end_col {
-                        if let Some(ch) =
-                            lines[cursor_line_idx].content().chars().nth(cursor_col_idx)
+                        let prefix_graphemes = cursor_col_idx - vrow.start_col;
+                        for (g_idx, g) in vrow.content.graphemes(true).enumerate() {
+                            if g_idx >= prefix_graphemes {
+                                break;
+                            }
+                            x_offset += UnicodeWidthStr::width(g);
+                        }
+                    } else {
+                        x_offset = UnicodeWidthStr::width(vrow.content.as_str());
+                    }
+                    let x_pos = (self.gutter_width() + x_offset) as u16;
+                    if in_range && vrow.start_col != vrow.end_col {
+                        if let Some(g) = vrow
+                            .content
+                            .graphemes(true)
+                            .nth(cursor_col_idx - vrow.start_col)
                         {
                             queue!(
                                 stdout,
@@ -515,7 +528,7 @@ impl Repl {
                                 SetBackgroundColor(Color::Red),
                                 SetForegroundColor(Color::White),
                                 SetAttribute(Attribute::Bold),
-                                Print(ch.to_string()),
+                                Print(g),
                                 style::ResetColor,
                                 SetAttribute(Attribute::Reset)
                             )?;
@@ -570,7 +583,7 @@ impl Repl {
 
                     let mut current_col = vrow.start_col;
                     for (text, style) in &vrow.segments {
-                        for ch in text.chars() {
+                        for g in text.graphemes(true) {
                             let in_hl = if is_visual_line {
                                 true
                             } else {
@@ -591,7 +604,7 @@ impl Repl {
                                     },
                                     SetBackgroundColor(Color::Cyan),
                                     SetForegroundColor(Color::Black),
-                                    Print(ch.to_string()),
+                                    Print(g),
                                     crossterm::style::ResetColor,
                                     SetAttribute(Attribute::Reset)
                                 )?;
@@ -604,7 +617,7 @@ impl Repl {
                                         SetAttribute(Attribute::Reset)
                                     },
                                     SetForegroundColor(style.fg_color()),
-                                    Print(ch.to_string()),
+                                    Print(g),
                                     crossterm::style::ResetColor,
                                     SetAttribute(Attribute::Reset)
                                 )?;
@@ -633,8 +646,17 @@ impl Repl {
         let skill = &SKILL_GROUPS[skill_idx];
         let buffer_name = self.buffer().name();
         let max_name_len = 20;
-        let truncated_name = if buffer_name.chars().count() > max_name_len {
-            let mut s: String = buffer_name.chars().take(max_name_len - 3).collect();
+        let truncated_name = if UnicodeWidthStr::width(buffer_name) > max_name_len {
+            let mut s: String = String::new();
+            let mut w = 0;
+            for g in buffer_name.graphemes(true) {
+                let gw = UnicodeWidthStr::width(g);
+                if w + gw + 3 > max_name_len {
+                    break;
+                }
+                s.push_str(g);
+                w += gw;
+            }
             s.push_str("...");
             s
         } else {
@@ -746,7 +768,7 @@ impl Repl {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
-                let col = prompt.chars().count() + cursor_col;
+                let col = UnicodeWidthStr::width(prompt) + cursor_col;
                 queue!(stdout, cursor::Show, cursor::MoveTo(col as u16, input_y))?;
             }
         }

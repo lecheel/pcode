@@ -84,7 +84,7 @@ impl Repl {
             KeyCode::Char('$') => {
                 let line_idx = self.buffer().cursor_line();
                 if let Some(line) = self.buffer().lines().get(line_idx) {
-                    let len = line.content().chars().count();
+                    let len = line.content().graphemes(true).count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.buffer_mut().set_cursor(line_idx, col);
                     self.ensure_cursor_visible();
@@ -181,25 +181,26 @@ impl Repl {
         } else {
             for i in sl..=el {
                 if let Some(line) = self.buffer().lines().get(i) {
-                    let content: Vec<char> = line.content().chars().collect();
+                    let line_content = line.content();
+                    let content: Vec<&str> = line_content.graphemes(true).collect();
                     if i == sl && i == el {
                         let end_idx = (ec + 1).min(content.len());
                         if sc < end_idx {
                             for c in &content[sc..end_idx] {
-                                text.push(*c);
+                                text.push_str(c);
                             }
                         }
                     } else if i == sl {
                         if sc < content.len() {
                             for c in &content[sc..] {
-                                text.push(*c);
+                                text.push_str(c);
                             }
                         }
                         text.push('\n');
                     } else if i == el {
                         let end_idx = (ec + 1).min(content.len());
                         for c in &content[..end_idx] {
-                            text.push(*c);
+                            text.push_str(c);
                         }
                     } else {
                         text.push_str(&line.content());
@@ -267,7 +268,7 @@ impl Repl {
             if target_line < self.buffer().len() {
                 let max_col = self.buffer().lines()[target_line]
                     .content()
-                    .chars()
+                    .graphemes(true)
                     .count()
                     .saturating_sub(1);
                 self.buffer_mut()

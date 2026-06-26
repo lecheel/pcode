@@ -2,6 +2,7 @@
 //! Free-standing helpers and constants extracted from the REPL.
 
 use crate::repl::buffer::{BufferLine, LineStyle};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const COMMAND_LIST: &[&str] = &[
     "quit", "q", "exit", "help", "h", "?", "save", "load", "sessions", "delete", "rm", "reset",
@@ -142,9 +143,9 @@ pub fn splice_line(line: &BufferLine, start_char: usize, end_char: usize) -> Buf
     let mut current_char = 0;
     for (text, style) in &line.segments {
         let mut current_text = String::new();
-        for ch in text.chars() {
+        for g in text.graphemes(true) {
             if current_char < start_char || current_char >= end_char {
-                current_text.push(ch);
+                current_text.push_str(g);
             }
             current_char += 1;
         }
