@@ -646,9 +646,17 @@ impl Repl {
         queue!(stdout, cursor::MoveTo(0, status_y))?;
         let mode_str = self.mode.as_str();
         let mode_color = self.mode.status_color();
-        let skill_idx = self.active_skill_group();
-        let skill = &self.skill_groups()[skill_idx];
+        let skill_str = if let Some(agent) = self.agent.as_ref() {
+            let groups = &agent.skill_groups;
+            let idx = self
+                .active_skill_group()
+                .min(groups.len().saturating_sub(1));
+            format!("{} {}", groups[idx].emoji, groups[idx].name)
+        } else {
+            "⚠️ Working...".to_string()
+        };
         let buffer_name = self.buffer().name();
+
         let max_name_len = 20;
         let truncated_name = if UnicodeWidthStr::width(buffer_name) > max_name_len {
             let mut s: String = String::new();
@@ -706,7 +714,8 @@ impl Repl {
             segments.push((" │ ".to_string(), Color::Grey));
             segments.push((detail, Color::Yellow));
             segments.push((" │ ".to_string(), Color::Grey));
-            segments.push((format!("{} {}", skill.emoji, skill.name), Color::Green));
+
+            segments.push((skill_str.clone(), Color::Green));
             segments.push((" │ ".to_string(), Color::Grey));
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
@@ -717,7 +726,8 @@ impl Repl {
             segments.push((format!(" {} ", mode_str), mode_color));
             segments.push((buffer_info, Color::Cyan));
             segments.push((" │ ".to_string(), Color::Grey));
-            segments.push((format!("{} {}", skill.emoji, skill.name), Color::Green));
+            segments.push((skill_str.clone(), Color::Green));
+
             segments.push((" │ ".to_string(), Color::Grey));
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
@@ -805,8 +815,11 @@ impl Repl {
                     s.to_string()
                 }
             };
-
-            let groups = self.skill_groups();
+            let groups: &[crate::agent::SkillGroup] = if let Some(agent) = self.agent.as_ref() {
+                &agent.skill_groups
+            } else {
+                &[]
+            };
             let get_skill_str = |key: &str, default_name: &str| -> String {
                 if let Some(idx) = groups.iter().position(|g| g.key.as_deref() == Some(key)) {
                     let g = &groups[idx];

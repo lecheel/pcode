@@ -522,6 +522,7 @@ impl PatchAgent {
             });
             let active_tools = self.active_tools();
             let tools_ref: &[Value] = &active_tools;
+
             let response = tokio::select! {
                 r = self.client.chat(&self.session.messages, tools_ref) => match r {
                     Ok(r) => r,
@@ -537,7 +538,16 @@ impl PatchAgent {
                 }
             };
 
-            let choice = &response["choices"][0];
+            let choice = match response["choices"].as_array().and_then(|c| c.first()) {
+                Some(c) => c,
+                None => {
+
+                    return format!(
+                        "❌ LLM Error: Malformed response (no choices). Response: {}",
+                        response
+                    );
+                }
+            };
             let message = choice["message"].clone();
 
             if let Some(reasoning) = message.get("reasoning_content").and_then(|v| v.as_str()) {

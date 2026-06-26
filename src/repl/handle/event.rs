@@ -322,7 +322,21 @@ impl Repl {
         self.render(stdout)?;
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         self.cancel_tx = Some(cancel_tx);
-        let mut agent = self.agent.take().expect("agent missing");
+
+        let mut agent = match self.agent.take() {
+            Some(a) => a,
+            None => {
+                self.push_llm_line(
+                    "  ❌ Agent is missing. Cannot submit input. Please restart the application.",
+                    LineStyle::Error,
+                );
+                self.mode = Mode::Normal;
+                self.waiting = false;
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+
         self.cached_skill_group = agent.active_skill_group;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         agent.set_event_channel(tx);
