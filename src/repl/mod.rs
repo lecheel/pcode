@@ -814,11 +814,22 @@ impl Repl {
                     .unwrap_or("");
                 pad_item(&format!("{}: {}{}", key, emoji, name))
             };
+
+            let chat_idx = groups
+                .iter()
+                .position(|g| g.aliases.iter().any(|a| a == "chat") || g.name == "Chat");
+            let edit_idx = groups
+                .iter()
+                .position(|g| g.aliases.iter().any(|a| a == "edit") || g.name == "Edit");
+            let full_idx = groups
+                .iter()
+                .position(|g| g.aliases.iter().any(|a| a == "full") || g.name == "Full");
+
             let line1_str = format!(
                 "{}{}{}{}{}{}",
-                get_item(" F1", "Chat", Some(0)),
-                get_item(" F2", "Edit", Some(4)),
-                get_item(" F3", "Full", Some(7)),
+                get_item(" F1", "Chat", chat_idx),
+                get_item(" F2", "Edit", edit_idx),
+                get_item(" F3", "Full", full_idx),
                 get_item(" F4", "Hunks", None),
                 get_item(" F5", "--NA", None),
                 get_item(" F6", "--NA", None),

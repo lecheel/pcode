@@ -149,30 +149,32 @@ impl Repl {
             return Ok(());
         }
 
-        let skill_idx = match key.code {
-            KeyCode::F(1) => Some(0),
-            KeyCode::F(2) => Some(4),
-            KeyCode::F(3) => Some(7),
+        let target_skill_name = match key.code {
+            KeyCode::F(1) => Some("chat"),
+            KeyCode::F(2) => Some("edit"),
+            KeyCode::F(3) => Some("full"),
             _ => None,
         };
-        if let Some(idx) = skill_idx {
-            let groups = self.skill_groups();
-            if idx < groups.len() && !self.waiting {
-                let (emoji, name, description) = groups
-                    .get(idx)
-                    .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
-                    .unwrap_or_default();
 
-                self.agent_mut().set_skill_group(idx);
-                self.cached_skill_group = idx;
-                self.popup.hide();
+        if let Some(name) = target_skill_name {
+            if !self.waiting {
+                if let Some(idx) = self.agent_mut().set_skill_group_by_name(name) {
+                    self.cached_skill_group = idx;
+                    self.popup.hide();
 
-                self.push_info(
-                    format!("  {} {} — {}", emoji, name, description),
-                    LineStyle::ToolResult,
-                );
-                self.scroll_to_bottom();
-                self.render(stdout)?;
+                    let (emoji, skill_name, description) = self
+                        .skill_groups()
+                        .get(idx)
+                        .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
+                        .unwrap_or_default();
+
+                    self.push_info(
+                        format!("  {} {} — {}", emoji, skill_name, description),
+                        LineStyle::ToolResult,
+                    );
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                }
             }
             return Ok(());
         }
