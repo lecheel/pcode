@@ -144,11 +144,46 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
-        if key.code == KeyCode::F(9) {
+        if key.code == KeyCode::F(1) {
             self.show_git_status(stdout, None)?;
             return Ok(());
         }
 
+        // 1. Check if any skill group explicitly claims this F-key
+        let key_str = match key.code {
+            KeyCode::F(n) => Some(format!("F{}", n)),
+            _ => None,
+        };
+
+        if let Some(k) = key_str {
+            if !self.waiting {
+                if let Some(idx) = self
+                    .skill_groups()
+                    .iter()
+                    .position(|g| g.key.as_deref() == Some(k.as_str()))
+                {
+                    let (emoji, name, description) = self
+                        .skill_groups()
+                        .get(idx)
+                        .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
+                        .unwrap_or_default();
+
+                    self.agent_mut().set_skill_group(idx);
+                    self.cached_skill_group = idx;
+                    self.popup.hide();
+
+                    self.push_info(
+                        format!("  {} {} — {}", emoji, name, description),
+                        LineStyle::ToolResult,
+                    );
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // 2. Fallback to default aliases for F1, F2, F3 if not explicitly mapped
         let target_skill_name = match key.code {
             KeyCode::F(1) => Some("chat"),
             KeyCode::F(2) => Some("edit"),

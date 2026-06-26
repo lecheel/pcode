@@ -14,6 +14,8 @@ pub struct SkillGroupConfig {
     pub prompt: String,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

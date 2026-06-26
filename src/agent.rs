@@ -161,6 +161,7 @@ pub struct SkillGroup {
     pub tools: Vec<String>,
     pub prompt: String,
     pub aliases: Vec<String>,
+    pub key: Option<String>,
 }
 
 const BUILT_IN_TOOL_NAMES: &[&str] = &[
@@ -200,6 +201,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             tools: vec![],
             prompt: CHAT_PROMPT.to_string(),
             aliases: vec![],
+            key: None,
         },
         SkillGroup {
             name: "Daemon".to_string(),
@@ -214,6 +216,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec!["net".to_string()],
+            key: None,
         },
         SkillGroup {
             name: "Discover".to_string(),
@@ -231,6 +234,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec!["eyes".to_string()],
+            key: None,
         },
         SkillGroup {
             name: "AST".to_string(),
@@ -249,6 +253,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: AST_SYSTEM_PROMPT.to_string(),
             aliases: vec!["ast".to_string()],
+            key: None,
         },
         SkillGroup {
             name: "Edit".to_string(),
@@ -268,6 +273,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec!["hand".to_string()],
+            key: None,
         },
         SkillGroup {
             name: "Verify".to_string(),
@@ -282,6 +288,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec![],
+            key: None,
         },
         SkillGroup {
             name: "Code".to_string(),
@@ -305,6 +312,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec![],
+            key: None,
         },
         SkillGroup {
             name: "Full".to_string(),
@@ -338,6 +346,7 @@ pub fn default_skill_groups() -> Vec<SkillGroup> {
             ],
             prompt: SYSTEM_PROMPT.to_string(),
             aliases: vec!["all".to_string()],
+            key: None,
         },
     ]
 }
@@ -365,7 +374,6 @@ impl PatchAgent {
             None
         };
 
-        // Load skill groups from config, falling back to defaults
         let skill_groups = if config.repl.skills.is_empty() {
             default_skill_groups()
         } else {
@@ -373,13 +381,24 @@ impl PatchAgent {
                 .repl
                 .skills
                 .iter()
-                .map(|s| SkillGroup {
-                    name: s.name.clone(),
-                    description: s.description.clone(),
-                    emoji: s.emoji.clone(),
-                    tools: s.tools.clone(),
-                    prompt: s.prompt.clone(),
-                    aliases: s.aliases.clone(),
+                .map(|s| {
+                    // Resolve prompt aliases so users don't need to paste massive prompts
+                    let prompt = match s.prompt.as_str() {
+                        "default" | "system" => SYSTEM_PROMPT.to_string(),
+                        "ast" => AST_SYSTEM_PROMPT.to_string(),
+                        "chat" => CHAT_PROMPT.to_string(),
+                        p => p.to_string(),
+                    };
+
+                    SkillGroup {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        emoji: s.emoji.clone(),
+                        tools: s.tools.clone(),
+                        prompt,
+                        aliases: s.aliases.clone(),
+                        key: s.key.clone(),
+                    }
                 })
                 .collect()
         };

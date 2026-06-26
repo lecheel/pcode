@@ -786,8 +786,8 @@ impl Repl {
             let y_l2 = y_bot.saturating_sub(1);
             let y_l1 = y_l2.saturating_sub(1);
             let y_top = y_l1.saturating_sub(1);
-
             let inner_w = (box_w as usize).saturating_sub(2);
+
             let pad = |s: &str| -> String {
                 let current_w = UnicodeWidthStr::width(s);
                 if current_w < inner_w {
@@ -796,7 +796,6 @@ impl Repl {
                     s.to_string()
                 }
             };
-
             let pad_item = |s: &str| -> String {
                 let target_w = 13;
                 let w = UnicodeWidthStr::width(s);
@@ -806,42 +805,35 @@ impl Repl {
                     s.to_string()
                 }
             };
-            let groups = self.skill_groups();
-            let get_item = |key: &str, name: &str, idx: Option<usize>| -> String {
-                let emoji = idx
-                    .and_then(|i| groups.get(i))
-                    .map(|g| g.emoji.as_str())
-                    .unwrap_or("");
-                pad_item(&format!("{}: {}{}", key, emoji, name))
-            };
 
-            let chat_idx = groups
-                .iter()
-                .position(|g| g.aliases.iter().any(|a| a == "chat") || g.name == "Chat");
-            let edit_idx = groups
-                .iter()
-                .position(|g| g.aliases.iter().any(|a| a == "edit") || g.name == "Edit");
-            let full_idx = groups
-                .iter()
-                .position(|g| g.aliases.iter().any(|a| a == "full") || g.name == "Full");
+            let groups = self.skill_groups();
+            let get_skill_str = |key: &str, default_name: &str| -> String {
+                if let Some(idx) = groups.iter().position(|g| g.key.as_deref() == Some(key)) {
+                    let g = &groups[idx];
+                    pad_item(&format!("{}: {}{}", key, g.emoji, g.name))
+                } else {
+                    pad_item(&format!("{}: {}", key, default_name))
+                }
+            };
 
             let line1_str = format!(
                 "{}{}{}{}{}{}",
-                get_item(" F1", "Chat", chat_idx),
-                get_item(" F2", "Edit", edit_idx),
-                get_item(" F3", "Full", full_idx),
-                get_item(" F4", "Hunks", None),
-                get_item(" F5", "--NA", None),
-                get_item(" F6", "--NA", None),
+                get_skill_str(" F1", "Git"),
+                get_skill_str(" F2", "Chat"),
+                get_skill_str(" F3", "Full"),
+                get_skill_str(" F4", "Hunks"),
+                get_skill_str(" F5", "--NA"),
+                get_skill_str(" F6", "--NA")
             );
+
             let line2_str = format!(
                 "{}{}{}{}{}{}",
-                get_item(" F7", "--NA", None),
-                get_item(" F8", "--NA", None),
-                get_item(" F9", "  Git", None),
-                get_item("F10", "Skills", None),
-                get_item("F11", "Prompt", None),
-                get_item("F12", "Cancel", None),
+                get_skill_str(" F7", "--NA"),
+                get_skill_str(" F8", "--NA"),
+                get_skill_str(" F9", "--NA"),
+                get_skill_str("F10", "Skills"),
+                get_skill_str("F11", "Prompt"),
+                get_skill_str("F12", "Cancel")
             );
 
             let l1 = pad(&line1_str);
