@@ -1,0 +1,865 @@
+// src/repl/handle/normal.rs
+//! Normal-mode key handling, `dd` deletion, word lookup.
+
+use super::super::*;
+use crate::agent::SKILL_GROUPS;
+use crate::repl::buffer::{BufferLine, LineStyle};
+use crate::repl::misc;
+use crate::repl::{CommandResult, Mode};
+use crossterm::{
+    cursor,
+    event::{KeyCode, KeyEvent, KeyModifiers},
+    execute, terminal,
+};
+use std::io;
+
+impl Repl {
+    pub(super) fn handle_normal_repeat(
+        &mut self,
+        key: KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<()> {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.buffer_mut().move_down(1);
+                self.ensure_cursor_visible();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.buffer_mut().move_up(1);
+                self.ensure_cursor_visible();
+            }
+            _ => return Ok(()),
+        }
+        self.render(stdout)
+    }
+
+    pub(super) fn handle_normal_key(
+        &mut self,
+        key: KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<()> {
+        if let Some(target) = self.pending_reset_target.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let out = std::process::Command::new("git")
+                        .arg("checkout")
+                        .arg("HEAD")
+                        .arg("--")
+                        .arg(&target)
+                        .output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
+                        if !msg.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ↩️  {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
+                        }
+                        if !err.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            ));
+                        }
+                    }
+                    self.show_git_status(stdout, Some(&target))?;
+                }
+                _ => {
+                    self.push_line("  Cancelled reset.", LineStyle::Dim);
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                }
+            }
+            return Ok(());
+        }
+        if let Some(target) = self.stash_pop_target.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    let out = std::process::Command::new("git")
+                        .arg("stash")
+                        .arg("pop")
+                        .arg(&target)
+                        .output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
+                        if !msg.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  📦 {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
+                        }
+                        if !err.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            ));
+                        }
+                    }
+                    self.show_git_status(stdout, None)?;
+                }
+                _ => {
+                    self.push_line("  Cancelled stash pop.", LineStyle::Dim);
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if key.code == KeyCode::Enter && self.buffer().name() == "fd" {
+            let cursor_line = self.buffer().cursor_line();
+            if let Some(line) = self.buffer().lines().get(cursor_line) {
+                let content = line.content().trim().to_string();
+                if !content.is_empty()
+                    && !content.starts_with('[')
+                    && !content.starts_with("No matches")
+                {
+                    self.load_file_to_buffer(&content, stdout)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        if key.code == KeyCode::Enter && self.buffer().name() == "rg" {
+            let cursor_line = self.buffer().cursor_line();
+            if let Some(line) = self.buffer().lines().get(cursor_line) {
+                let content = line.content();
+
+                if let Some(colon1) = content.find(':') {
+                    if let Some(colon2) = content[colon1 + 1..].find(':') {
+                        let file = content[..colon1].to_string();
+                        let line_num_str = &content[colon1 + 1..colon1 + 1 + colon2];
+                        if let Ok(line_num) = line_num_str.parse::<usize>() {
+                            if !file.is_empty() && !file.contains(' ') {
+                                self.load_file_to_buffer(&file, stdout)?;
+                                let target_line = line_num.saturating_sub(1);
+                                if target_line < self.buffer().len() {
+                                    self.buffer_mut().set_cursor(target_line, 0);
+                                    let h = self.response_area_height();
+                                    let w = self.content_width();
+                                    self.buffer_mut().ensure_cursor_visible(h, w);
+                                }
+                                self.render(stdout)?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(colon1) = content.find(':') {
+                    let line_num_str = &content[..colon1];
+                    if let Ok(line_num) = line_num_str.parse::<usize>() {
+                        let mut file_to_open = None;
+                        for i in (0..cursor_line).rev() {
+                            if let Some(prev_line) = self.buffer().lines().get(i) {
+                                let prev_content = prev_line.content();
+                                if prev_content.is_empty() {
+                                    continue;
+                                }
+                                if prev_content.starts_with(|c: char| c.is_ascii_digit())
+                                    && prev_content.contains(':')
+                                {
+                                    continue;
+                                }
+                                file_to_open = Some(prev_content.clone());
+                                break;
+                            }
+                        }
+
+                        if let Some(file) = file_to_open {
+                            self.load_file_to_buffer(&file, stdout)?;
+                            let target_line = line_num.saturating_sub(1);
+                            if target_line < self.buffer().len() {
+                                self.buffer_mut().set_cursor(target_line, 0);
+                                let h = self.response_area_height();
+                                let w = self.content_width();
+                                self.buffer_mut().ensure_cursor_visible(h, w);
+                            }
+                            self.render(stdout)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.buffer().name() == "GitStatus" {
+            match key.code {
+                KeyCode::Char('q') => {
+                    self.close_buffer();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('c') => {
+                    let _ = std::process::Command::new("git")
+                        .arg("add")
+                        .arg("-u")
+                        .output();
+                    self.close_buffer();
+                    self.mode = Mode::Insert;
+                    self.editor.clear();
+                    let msg = "Please review the staged changes, write a concise commit message, and commit them.";
+                    for c in msg.chars() {
+                        self.editor.insert_char(c);
+                    }
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+                KeyCode::Char('z') => {
+                    let out = std::process::Command::new("git").arg("stash").output();
+                    if let Ok(o) = out {
+                        let msg = String::from_utf8_lossy(&o.stdout);
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let c_idx = self.console_buffer_idx();
+                        if !msg.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  📦 {}", msg.trim()),
+                                LineStyle::Info,
+                            ));
+                        } else if !err.trim().is_empty() {
+                            self.buffers[c_idx].push(BufferLine::new(
+                                format!("  ❌ {}", err.trim()),
+                                LineStyle::Error,
+                            ));
+                        }
+                    }
+                    self.show_git_status(stdout, None)?;
+                    return Ok(());
+                }
+                KeyCode::Char('s') => {
+                    let cursor_line = self.buffer().cursor_line();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        let content = line.content();
+                        if content.starts_with("    ") {
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
+
+                            let status_out = std::process::Command::new("git")
+                                .arg("status")
+                                .arg("--porcelain")
+                                .output();
+                            if let Ok(so) = status_out {
+                                let s = String::from_utf8_lossy(&so.stdout);
+                                for l in s.lines() {
+                                    if l.len() > 3 && l[3..].trim() == file {
+                                        let x = l.chars().next().unwrap_or(' ');
+                                        if x != ' ' && x != '?' {
+                                            let _ = std::process::Command::new("git")
+                                                .arg("restore")
+                                                .arg("--staged")
+                                                .arg(&file)
+                                                .output();
+                                        } else {
+                                            let _ = std::process::Command::new("git")
+                                                .arg("add")
+                                                .arg(&file)
+                                                .output();
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            self.show_git_status(stdout, Some(&file))?;
+                            return Ok(());
+                        }
+                    }
+                }
+                KeyCode::Char('r') => {
+                    let cursor_line = self.buffer().cursor_line();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        let content = line.content();
+                        if content.starts_with("    ") && !content.contains("(none)") {
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
+
+                            let out = std::process::Command::new("git")
+                                .arg("diff")
+                                .arg("--numstat")
+                                .arg("HEAD")
+                                .arg("--")
+                                .arg(&file)
+                                .output();
+                            let mut loc_info = "0 LOC".to_string();
+                            if let Ok(o) = out {
+                                let stdout = String::from_utf8_lossy(&o.stdout);
+                                if let Some(line) = stdout.lines().next() {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    if parts.len() >= 2 {
+                                        let added = parts[0];
+                                        let deleted = parts[1];
+                                        loc_info = format!("+{} -{} LOC", added, deleted);
+                                    }
+                                }
+                            }
+
+                            self.pending_reset_target = Some(file.clone());
+                            self.push_line(
+                                format!("  Reset {} to HEAD? ({}) [n/Y]", file, loc_info),
+                                LineStyle::Info,
+                            );
+                            self.scroll_to_bottom();
+                            self.render(stdout)?;
+                            return Ok(());
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    let cursor_line = self.buffer().cursor_line();
+                    let mut stash_ref_opt = None;
+                    let mut file_to_open = None;
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        let content = line.content();
+                        if content.contains("stash@{") {
+                            if let Some(start) = content.find("stash@{") {
+                                if let Some(end) = content[start..].find("}") {
+                                    let stash_ref = &content[start..start + end + 1];
+                                    stash_ref_opt = Some(stash_ref.to_string());
+                                }
+                            }
+                        } else if content.starts_with("    ") {
+                            let file = if content.starts_with("    + ") {
+                                content.trim_start_matches("    + ").trim().to_string()
+                            } else {
+                                content.trim_start_matches("    ").trim().to_string()
+                            };
+                            file_to_open = Some(file);
+                        }
+                    }
+                    if let Some(stash_ref) = stash_ref_opt {
+                        self.stash_pop_target = Some(stash_ref.clone());
+                        self.push_line(format!("  Pop {}? [n/Y]", stash_ref), LineStyle::Info);
+                        self.scroll_to_bottom();
+                        self.render(stdout)?;
+                        return Ok(());
+                    } else if let Some(file) = file_to_open {
+                        self.load_file_to_buffer(&file, stdout)?;
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let amount = self.count.unwrap_or(1);
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('d') => self.half_page_down(),
+                KeyCode::Char('u') => self.half_page_up(),
+                KeyCode::Char('b') => self.half_page_up(),
+                KeyCode::Char('f') => self.half_page_down(),
+                _ => {}
+            }
+            self.count = None;
+            self.pending = None;
+            self.render(stdout)?;
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Char('w') => {
+                if self.buffer().name() == "SedChanges" {
+                    self.apply_sed_changes(stdout)?;
+                    self.count = None;
+                    self.pending = None;
+                    return Ok(());
+                }
+                self.count = None;
+            }
+            KeyCode::Char('i') => {
+                self.mode = Mode::Insert;
+                self.count = None;
+            }
+            KeyCode::Char('a') => {
+                self.mode = Mode::Insert;
+                self.editor.move_end();
+                self.count = None;
+            }
+            KeyCode::Char('A') => {
+                self.mode = Mode::Insert;
+                self.editor.move_end();
+                self.count = None;
+            }
+            KeyCode::Char('I') => {
+                self.mode = Mode::Insert;
+                self.editor.move_home();
+                self.count = None;
+            }
+            KeyCode::Char('o') => {
+                let buffer_name = self.buffer().name().to_string();
+                if !buffer_name.is_empty()
+                    && buffer_name != "Chat"
+                    && buffer_name != "Console"
+                    && buffer_name != "rg"
+                    && buffer_name != "fd"
+                    && buffer_name != "GitStatus"
+                {
+                    let root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let raw_path = std::path::Path::new(&buffer_name);
+                    let resolved = if raw_path.is_absolute() {
+                        raw_path.to_path_buf()
+                    } else {
+                        root.join(&buffer_name)
+                    };
+                    let line_num = self.buffer().cursor_line() + 1;
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+                    let _ = terminal::disable_raw_mode();
+                    let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
+                    let _ = stdout.flush();
+
+                    let mut cmd = std::process::Command::new(&editor);
+                    if editor == "code" || editor == "cursor" {
+                        cmd.arg("-g")
+                            .arg(format!("{}:{}", resolved.display(), line_num));
+                    } else {
+                        cmd.arg(format!("+{}", line_num)).arg(&resolved);
+                    }
+
+                    match cmd.status() {
+                        Ok(_) => {
+                            if let Ok(content) = std::fs::read_to_string(&resolved) {
+                                self.buffer_mut().clear();
+                                self.buffer_mut().push_str(&content, LineStyle::Plain);
+                                if line_num - 1 < self.buffer().len() {
+                                    self.buffer_mut().set_cursor(line_num - 1, 0);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.push_info(
+                                format!("  ❌ Failed to open editor: {}", e),
+                                LineStyle::Error,
+                            );
+                        }
+                    }
+
+                    let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
+                    let _ = terminal::enable_raw_mode();
+                    self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::Char('>') => {
+                self.mode = Mode::Insert;
+                self.editor.clear();
+                self.count = None;
+            }
+            KeyCode::Char(':') => {
+                self.mode = Mode::Command;
+                self.cmd_editor.clear();
+                self.count = None;
+                self.pending = None;
+                self.render_spinner_only(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Left => {
+                self.buffer_mut().move_left();
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::Right => {
+                self.buffer_mut().move_right();
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::Home => {
+                let line_idx = self.buffer().cursor_line();
+                if let Some(line) = self.buffer().lines().get(line_idx) {
+                    let len = line.content().chars().count();
+                    let col = if len > 0 { len - 1 } else { 0 };
+                    self.set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::End => {
+                let line_idx = self.buffer().cursor_line();
+                if let Some(line) = self.buffer().lines().get(line_idx) {
+                    let len = line.content().chars().count();
+                    let col = if len > 0 { len - 1 } else { 0 };
+                    self.set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::Char('/') => {
+                self.mode = Mode::Search;
+                self.cmd_editor.clear();
+                self.count = None;
+                self.pending = None;
+                self.render_spinner_only(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('?') => {
+                self.fkey_help = !self.fkey_help;
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('n') => {
+                if let Some(idx) = self.search_match_idx {
+                    if !self.search_matches.is_empty() {
+                        let next_idx = (idx + 1) % self.search_matches.len();
+                        self.search_match_idx = Some(next_idx);
+                        let target_line = self.search_matches[next_idx];
+                        self.buffer_mut().set_cursor(target_line, 0);
+                        self.ensure_cursor_visible();
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::Char('N') => {
+                if let Some(idx) = self.search_match_idx {
+                    if !self.search_matches.is_empty() {
+                        let prev_idx = if idx == 0 {
+                            self.search_matches.len() - 1
+                        } else {
+                            idx - 1
+                        };
+                        self.search_match_idx = Some(prev_idx);
+                        let target_line = self.search_matches[prev_idx];
+                        self.buffer_mut().set_cursor(target_line, 0);
+                        self.ensure_cursor_visible();
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::PageDown => self.half_page_down(),
+            KeyCode::PageUp => self.half_page_up(),
+            KeyCode::Char('l') => {
+                if let Some(lines) = self.get_git_gutter_lines() {
+                    if !lines.is_empty() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        let next = lines.iter().find(|&&l| l > current_line).or(lines.first());
+                        if let Some(&target) = next {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.center_cursor();
+                        }
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::Char('L') => {
+                if let Some(lines) = self.get_git_gutter_lines() {
+                    if !lines.is_empty() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        let prev = lines
+                            .iter()
+                            .rev()
+                            .find(|&&l| l < current_line)
+                            .or(lines.last());
+                        if let Some(&target) = prev {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.center_cursor();
+                        }
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::Char('z') => {
+                if self.pending == Some('z') {
+                    self.center_cursor();
+                    self.pending = None;
+                    self.count = None;
+                } else {
+                    self.pending = Some('z');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+
+            KeyCode::Char('0') => {
+                let line_idx = self.buffer().cursor_line();
+                self.set_cursor(line_idx, 0);
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::Char('$') => {
+                let line_idx = self.buffer().cursor_line();
+                if let Some(line) = self.buffer().lines().get(line_idx) {
+                    let len = line.content().chars().count();
+                    let col = if len > 0 { len - 1 } else { 0 };
+                    self.set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.buffer_mut().move_down(amount);
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.buffer_mut().move_up(amount);
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::Char('K') => {
+                if let Some(word) = self.get_word_under_cursor() {
+                    let cmd = format!("rg {}", word);
+                    let result = self.execute_command(&cmd, stdout)?;
+                    match result {
+                        CommandResult::Quit => {
+                            self.editor.save_history(&self.config.repl.history_file);
+                            self.cmd_editor
+                                .save_history(&self.config.repl.command_history_file);
+                            if let Some(handle) = self.agent_handle.take() {
+                                handle.abort();
+                            }
+                            return Err(anyhow::anyhow!("__QUIT__"));
+                        }
+                        CommandResult::ClearScreen => {
+                            self.buffer_mut().clear();
+                            self.push_line("Screen cleared.", LineStyle::Dim);
+                        }
+                        CommandResult::Continue => {}
+                    }
+                }
+                self.count = None;
+            }
+            KeyCode::Char('G') => {
+                if self.count.is_some() {
+                    let target = amount.saturating_sub(1);
+                    if target < self.buffer().len() {
+                        self.buffer_mut().move_top();
+                        self.buffer_mut().move_down(target);
+                    }
+                } else {
+                    self.move_bottom();
+                }
+                self.count = None;
+            }
+            KeyCode::Char('g') => {
+                if self.pending == Some('g') {
+                    self.buffer_mut().move_top();
+                    self.pending = None;
+                    self.count = None;
+                } else {
+                    self.pending = Some('g');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+            KeyCode::Char('y') => {
+                if self.pending == Some('y') {
+                    let cursor_line = self.buffer().cursor_line();
+                    let cursor_col = self.buffer().cursor_col();
+                    if let Some(line) = self.buffer().lines().get(cursor_line) {
+                        match arboard::Clipboard::new()
+                            .and_then(|mut cb| cb.set_text(line.content().clone()))
+                        {
+                            Ok(_) => {
+                                self.push_info(
+                                    "  📋 Yanked line to clipboard".to_string(),
+                                    LineStyle::Dim,
+                                );
+                            }
+                            Err(e) => {
+                                self.push_info(
+                                    format!("  ❌ Clipboard error: {}", e),
+                                    LineStyle::Error,
+                                );
+                            }
+                        }
+                        self.set_cursor(cursor_line, cursor_col);
+                        self.scroll_to_bottom_view();
+                    }
+                    self.pending = None;
+                    self.count = None;
+                } else {
+                    self.pending = Some('y');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+
+            KeyCode::Char('d') => {
+                if self.pending == Some('d') {
+                    let amount = self.count.unwrap_or(1);
+                    self.do_dd(amount)?;
+                    self.pending = None;
+                    self.count = None;
+                } else {
+                    self.pending = Some('d');
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+
+            KeyCode::Char('u') => {
+                if self.buffer_mut().undo() {
+                    self.push_info("  ↩️  Undone line deletion", LineStyle::Dim);
+                } else {
+                    self.push_info("  Nothing to undo", LineStyle::Dim);
+                }
+                self.scroll_to_bottom_view();
+                self.ensure_cursor_visible();
+                self.count = None;
+            }
+            KeyCode::PageDown => self.half_page_down(),
+            KeyCode::PageUp => self.half_page_up(),
+            KeyCode::Home => self.buffer_mut().move_top(),
+            KeyCode::End => self.move_bottom(),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.mode = Mode::Insert;
+                self.editor.clear();
+                self.count = None;
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let digit = c.to_digit(10).unwrap() as usize;
+                if self.count.is_some() || c != '0' {
+                    self.count = Some(self.count.unwrap_or(0) * 10 + digit);
+                    self.pending = None;
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+            KeyCode::Char('v') => {
+                self.mode = Mode::Visual;
+                self.last_visual_mode = Some(Mode::Visual);
+                self.selection_start =
+                    Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('V') => {
+                self.mode = Mode::VisualLine;
+                self.last_visual_mode = Some(Mode::VisualLine);
+                self.selection_start =
+                    Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
+                self.count = None;
+                self.pending = None;
+                self.render(stdout)?;
+                return Ok(());
+            }
+            _ => {
+                self.count = None;
+            }
+        }
+        self.pending = None;
+        self.render(stdout)
+    }
+
+    fn get_word_under_cursor(&self) -> Option<String> {
+        let line_idx = self.buffer().cursor_line();
+        let col_idx = self.buffer().cursor_col();
+        let line = self.buffer().lines().get(line_idx)?;
+        let content = line.content();
+        let chars: Vec<char> = content.chars().collect();
+        if chars.is_empty() {
+            return None;
+        }
+        let col = col_idx.min(chars.len().saturating_sub(1));
+
+        if !chars[col].is_alphanumeric() && chars[col] != '_' {
+            return None;
+        }
+
+        let mut start = col;
+        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+            start -= 1;
+        }
+
+        let mut end = col;
+        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+            end += 1;
+        }
+
+        let word: String = chars[start..end].iter().collect();
+        if word.is_empty() {
+            None
+        } else {
+            Some(word)
+        }
+    }
+
+    pub(super) fn do_dd(&mut self, amount: usize) -> anyhow::Result<()> {
+        let buffer_name = self.buffer().name().to_string();
+        if buffer_name == "SedChanges" {
+            let cursor_line = self.buffer().cursor_line();
+            let mut block_start = cursor_line;
+            while block_start > 0 {
+                let content = self
+                    .buffer()
+                    .lines()
+                    .get(block_start)
+                    .map(|l| l.content())
+                    .unwrap_or_default();
+                if content.starts_with("@@ ") {
+                    break;
+                }
+                block_start -= 1;
+            }
+            let content = self
+                .buffer()
+                .lines()
+                .get(block_start)
+                .map(|l| l.content())
+                .unwrap_or_default();
+            if content.starts_with("@@ ") && cursor_line <= block_start + 3 {
+                let lines_len = self.buffer().len();
+                let end_line = (block_start + 4).min(lines_len);
+                self.buffer_mut().remove_lines(block_start, end_line);
+
+                let new_len = self.buffer().len();
+                let new_cursor = if new_len == 0 {
+                    0
+                } else {
+                    block_start.min(new_len - 1)
+                };
+                self.set_cursor(new_cursor, 0);
+                self.ensure_cursor_visible();
+                self.push_info("  🗑️  Discarded change", LineStyle::Dim);
+                self.scroll_to_bottom_view();
+            }
+        } else {
+            let cursor_line = self.buffer().cursor_line();
+            let lines_len = self.buffer().len();
+            if lines_len > 0 {
+                let end_line = (cursor_line + amount).min(lines_len);
+                let mut yanked_text = String::new();
+
+                for i in cursor_line..end_line {
+                    if let Some(line) = self.buffer().lines().get(i) {
+                        yanked_text.push_str(&line.content());
+                        yanked_text.push('\n');
+                    }
+                }
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.push_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error)
+                    }
+                }
+                self.buffer_mut().remove_lines(cursor_line, end_line);
+                let new_len = self.buffer().len();
+                let new_cursor = if new_len == 0 {
+                    0
+                } else {
+                    cursor_line.min(new_len - 1)
+                };
+                self.set_cursor(new_cursor, 0);
+                self.ensure_cursor_visible();
+                self.push_info(
+                    format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
+                    LineStyle::Dim,
+                );
+                self.scroll_to_bottom_view();
+            }
+        }
+        Ok(())
+    }
+}
