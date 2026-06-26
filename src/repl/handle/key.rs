@@ -2,7 +2,6 @@
 //! Top-level key dispatcher.
 
 use super::super::*;
-use crate::agent::SKILL_GROUPS;
 use crate::repl::buffer::LineStyle;
 use crate::repl::{Mode, PopupMode};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -149,6 +148,7 @@ impl Repl {
             self.show_git_status(stdout, None)?;
             return Ok(());
         }
+
         let skill_idx = match key.code {
             KeyCode::F(1) => Some(0),
             KeyCode::F(2) => Some(4),
@@ -156,13 +156,19 @@ impl Repl {
             _ => None,
         };
         if let Some(idx) = skill_idx {
-            if idx < SKILL_GROUPS.len() && !self.waiting {
+            let groups = self.skill_groups();
+            if idx < groups.len() && !self.waiting {
+                let (emoji, name, description) = groups
+                    .get(idx)
+                    .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
+                    .unwrap_or_default();
+
                 self.agent_mut().set_skill_group(idx);
                 self.cached_skill_group = idx;
                 self.popup.hide();
-                let group = &SKILL_GROUPS[idx];
+
                 self.push_info(
-                    format!("  {} {} — {}", group.emoji, group.name, group.description),
+                    format!("  {} {} — {}", emoji, name, description),
                     LineStyle::ToolResult,
                 );
                 self.scroll_to_bottom();
@@ -170,6 +176,7 @@ impl Repl {
             }
             return Ok(());
         }
+
         if self.popup.active {
             return self.handle_popup_key(key, stdout);
         }

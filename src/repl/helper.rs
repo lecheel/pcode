@@ -295,14 +295,25 @@ impl super::Repl {
         idx: usize,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
-        if idx >= SKILL_GROUPS.len() {
+        let groups_len = self.skill_groups().len();
+        if idx >= groups_len {
             return Ok(());
         }
+
+        let (emoji, name, description) = {
+            let group = &self.skill_groups()[idx];
+            (
+                group.emoji.clone(),
+                group.name.clone(),
+                group.description.clone(),
+            )
+        };
+
         self.agent_mut().set_skill_group(idx);
         self.cached_skill_group = idx;
-        let group = &SKILL_GROUPS[idx];
+
         self.push_line(
-            format!("  {} {} — {}", group.emoji, group.name, group.description),
+            format!("  {} {} — {}", emoji, name, description),
             LineStyle::ToolResult,
         );
         self.scroll_to_bottom();
@@ -312,20 +323,18 @@ impl super::Repl {
     pub(super) fn cycle_skill_group(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         self.agent_mut().cycle_skill_group();
         self.cached_skill_group = self.agent_ref().active_skill_group;
-        let group = &SKILL_GROUPS[self.cached_skill_group];
-        self.push_line(
-            format!("  {} {} — {}", group.emoji, group.name, group.description),
-            LineStyle::ToolResult,
-        );
-        self.scroll_to_bottom();
-        self.render(stdout)
-    }
 
-    pub(super) fn toggle_tools(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        let tools_on = self.agent_mut().toggle_skills();
-        self.cached_skill_group = self.agent_ref().active_skill_group;
+        let (emoji, name, description) = {
+            let group = &self.skill_groups()[self.cached_skill_group];
+            (
+                group.emoji.clone(),
+                group.name.clone(),
+                group.description.clone(),
+            )
+        };
+
         self.push_line(
-            format!("  Tools: {}", if tools_on { "ON" } else { "OFF" }),
+            format!("  {} {} — {}", emoji, name, description),
             LineStyle::ToolResult,
         );
         self.scroll_to_bottom();
@@ -339,9 +348,18 @@ impl super::Repl {
     ) -> anyhow::Result<()> {
         if let Some(idx) = self.agent_mut().set_skill_group_by_name(name) {
             self.cached_skill_group = idx;
-            let group = &SKILL_GROUPS[idx];
+
+            let (emoji, name, description) = {
+                let group = &self.skill_groups()[idx];
+                (
+                    group.emoji.clone(),
+                    group.name.clone(),
+                    group.description.clone(),
+                )
+            };
+
             self.push_line(
-                format!("  {} {} — {}", group.emoji, group.name, group.description),
+                format!("  {} {} — {}", emoji, name, description),
                 LineStyle::ToolResult,
             );
             self.scroll_to_bottom();
@@ -357,15 +375,29 @@ impl super::Repl {
         Ok(())
     }
 
+    pub(super) fn toggle_tools(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let tools_on = self.agent_mut().toggle_skills();
+        self.cached_skill_group = self.agent_ref().active_skill_group;
+        self.push_line(
+            format!("  Tools: {}", if tools_on { "ON" } else { "OFF" }),
+            LineStyle::ToolResult,
+        );
+        self.scroll_to_bottom();
+        self.render(stdout)
+    }
+
     pub(super) fn show_skill_group_popup(&mut self) {
         self.popup_mode = super::PopupMode::SkillGroups;
         let active_skill_group = self.active_skill_group();
-        let max_name_width = SKILL_GROUPS
+        let groups = self.skill_groups();
+
+        let max_name_width = groups
             .iter()
             .map(|g| disp_width(&g.name))
             .max()
             .unwrap_or(5);
-        let items: Vec<PopupItem> = SKILL_GROUPS
+
+        let items: Vec<PopupItem> = groups
             .iter()
             .enumerate()
             .map(|(i, g)| {

@@ -155,12 +155,12 @@ pub enum AgentEvent {
 
 #[derive(Debug, Clone)]
 pub struct SkillGroup {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub emoji: &'static str,
-    pub tools: &'static [&'static str],
-    pub prompt: &'static str,
-    pub aliases: &'static [&'static str],
+    pub name: String,
+    pub description: String,
+    pub emoji: String,
+    pub tools: Vec<String>,
+    pub prompt: String,
+    pub aliases: Vec<String>,
 }
 
 const BUILT_IN_TOOL_NAMES: &[&str] = &[
@@ -190,154 +190,157 @@ const BUILT_IN_TOOL_NAMES: &[&str] = &[
     "ast_explain",
 ];
 
-pub const SKILL_GROUPS: &[SkillGroup] = &[
-    SkillGroup {
-        name: "Chat",
-        description: "Conversational mode, no tools",
-        emoji: "💬",
-        tools: &[],
-        prompt: CHAT_PROMPT,
-        aliases: &[],
-    },
-    SkillGroup {
-        name: "Daemon",
-        description: "Context daemon: skeleton, hash, catalog",
-        emoji: "🌐",
-        tools: &[
-            "daemon_skeleton",
-            "daemon_get_hash",
-            "daemon_file_info",
-            "daemon_catalog",
-            "daemon_loc_info",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &["net"],
-    },
-    SkillGroup {
-        name: "Discover",
-        description: "Browse, search, AST patterns",
-        emoji: "🔍",
-        tools: &[
-            "codex_eyes_ls",
-            "codex_eyes_grep",
-            "codex_eyes_search",
-            "codex_eyes_find",
-            "codex_eyes_find_fuzzy",
-            "codex_eyes_read",
-            "ast_explain",
-            "ast_grep_search",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &["eyes"],
-    },
-    SkillGroup {
-        name: "AST",
-        description: "AST-driven edits: explain, search, patch",
-        emoji: "🌲",
-        tools: &[
-            "ast_explain",
-            "ast_grep_search",
-            "apply_patch",
-            "codex_eyes_read",
-            "codex_eyes_search",
-            "codex_eyes_sed",
-            "task_create",
-            "task_step",
-            "task_complete",
-        ],
-        prompt: AST_SYSTEM_PROMPT,
-        aliases: &["ast"],
-    },
-    SkillGroup {
-        name: "Edit",
-        description: "Surgical edits: sed + patch + create",
-        emoji: "✏️",
-        tools: &[
-            "codex_eyes_sed",
-            "apply_patch",
-            "codex_eyes_createFile",
-            "codex_eyes_undo",
-            "codex_eyes_read",
-            "codex_eyes_search",
-            "ast_grep_search",
-            "task_create",
-            "task_step",
-            "task_complete",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &["hand"],
-    },
-    SkillGroup {
-        name: "Verify",
-        description: "Check diffs, compilation, tasks",
-        emoji: "✅",
-        tools: &[
-            "codex_eyes_gitdiff",
-            "codex_eyes_cargo_check",
-            "codex_eyes_read",
-            "codex_eyes_search",
-            "task_list",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &[],
-    },
-    SkillGroup {
-        name: "Code",
-        description: "Discover + Edit (no verify)",
-        emoji: "🛠️",
-        tools: &[
-            "codex_eyes_ls",
-            "codex_eyes_grep",
-            "codex_eyes_search",
-            "codex_eyes_find",
-            "codex_eyes_find_fuzzy",
-            "codex_eyes_read",
-            "codex_eyes_sed",
-            "ast_grep_search",
-            "apply_patch",
-            "codex_eyes_createFile",
-            "codex_eyes_undo",
-            "task_create",
-            "task_step",
-            "task_complete",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &[],
-    },
-    SkillGroup {
-        name: "Full",
-        description: "All tools (default)",
-        emoji: "🚀",
-        tools: &[
-            "daemon_skeleton",
-            "daemon_get_hash",
-            "daemon_file_info",
-            "daemon_catalog",
-            "daemon_loc_info",
-            "codex_eyes_ls",
-            "codex_eyes_grep",
-            "codex_eyes_sed",
-            "ast_grep_search",
-            "apply_patch",
-            "codex_eyes_createFile",
-            "codex_eyes_gitdiff",
-            "codex_eyes_search",
-            "codex_eyes_find",
-            "codex_eyes_find_fuzzy",
-            "codex_eyes_read",
-            "codex_eyes_cargo_check",
-            "codex_eyes_undo",
-            "ast_explain",
-            "task_create",
-            "task_step",
-            "task_complete",
-            "task_list",
-            "task_abort",
-        ],
-        prompt: SYSTEM_PROMPT,
-        aliases: &["all"],
-    },
-];
+// Replace the static array definition entirely with this function:
+pub fn default_skill_groups() -> Vec<SkillGroup> {
+    vec![
+        SkillGroup {
+            name: "Chat".to_string(),
+            description: "Conversational mode, no tools".to_string(),
+            emoji: "💬".to_string(),
+            tools: vec![],
+            prompt: CHAT_PROMPT.to_string(),
+            aliases: vec![],
+        },
+        SkillGroup {
+            name: "Daemon".to_string(),
+            description: "Context daemon: skeleton, hash, catalog".to_string(),
+            emoji: "🌐".to_string(),
+            tools: vec![
+                "daemon_skeleton".to_string(),
+                "daemon_get_hash".to_string(),
+                "daemon_file_info".to_string(),
+                "daemon_catalog".to_string(),
+                "daemon_loc_info".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec!["net".to_string()],
+        },
+        SkillGroup {
+            name: "Discover".to_string(),
+            description: "Browse, search, AST patterns".to_string(),
+            emoji: "🔍".to_string(),
+            tools: vec![
+                "codex_eyes_ls".to_string(),
+                "codex_eyes_grep".to_string(),
+                "codex_eyes_search".to_string(),
+                "codex_eyes_find".to_string(),
+                "codex_eyes_find_fuzzy".to_string(),
+                "codex_eyes_read".to_string(),
+                "ast_explain".to_string(),
+                "ast_grep_search".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec!["eyes".to_string()],
+        },
+        SkillGroup {
+            name: "AST".to_string(),
+            description: "AST-driven edits: explain, search, patch".to_string(),
+            emoji: "🌲".to_string(),
+            tools: vec![
+                "ast_explain".to_string(),
+                "ast_grep_search".to_string(),
+                "apply_patch".to_string(),
+                "codex_eyes_read".to_string(),
+                "codex_eyes_search".to_string(),
+                "codex_eyes_sed".to_string(),
+                "task_create".to_string(),
+                "task_step".to_string(),
+                "task_complete".to_string(),
+            ],
+            prompt: AST_SYSTEM_PROMPT.to_string(),
+            aliases: vec!["ast".to_string()],
+        },
+        SkillGroup {
+            name: "Edit".to_string(),
+            description: "Surgical edits: sed + patch + create".to_string(),
+            emoji: "✏️".to_string(),
+            tools: vec![
+                "codex_eyes_sed".to_string(),
+                "apply_patch".to_string(),
+                "codex_eyes_createFile".to_string(),
+                "codex_eyes_undo".to_string(),
+                "codex_eyes_read".to_string(),
+                "codex_eyes_search".to_string(),
+                "ast_grep_search".to_string(),
+                "task_create".to_string(),
+                "task_step".to_string(),
+                "task_complete".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec!["hand".to_string()],
+        },
+        SkillGroup {
+            name: "Verify".to_string(),
+            description: "Check diffs, compilation, tasks".to_string(),
+            emoji: "✅".to_string(),
+            tools: vec![
+                "codex_eyes_gitdiff".to_string(),
+                "codex_eyes_cargo_check".to_string(),
+                "codex_eyes_read".to_string(),
+                "codex_eyes_search".to_string(),
+                "task_list".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec![],
+        },
+        SkillGroup {
+            name: "Code".to_string(),
+            description: "Discover + Edit (no verify)".to_string(),
+            emoji: "🛠️".to_string(),
+            tools: vec![
+                "codex_eyes_ls".to_string(),
+                "codex_eyes_grep".to_string(),
+                "codex_eyes_search".to_string(),
+                "codex_eyes_find".to_string(),
+                "codex_eyes_find_fuzzy".to_string(),
+                "codex_eyes_read".to_string(),
+                "codex_eyes_sed".to_string(),
+                "ast_grep_search".to_string(),
+                "apply_patch".to_string(),
+                "codex_eyes_createFile".to_string(),
+                "codex_eyes_undo".to_string(),
+                "task_create".to_string(),
+                "task_step".to_string(),
+                "task_complete".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec![],
+        },
+        SkillGroup {
+            name: "Full".to_string(),
+            description: "All tools (default)".to_string(),
+            emoji: "🚀".to_string(),
+            tools: vec![
+                "daemon_skeleton".to_string(),
+                "daemon_get_hash".to_string(),
+                "daemon_file_info".to_string(),
+                "daemon_catalog".to_string(),
+                "daemon_loc_info".to_string(),
+                "codex_eyes_ls".to_string(),
+                "codex_eyes_grep".to_string(),
+                "codex_eyes_sed".to_string(),
+                "ast_grep_search".to_string(),
+                "apply_patch".to_string(),
+                "codex_eyes_createFile".to_string(),
+                "codex_eyes_gitdiff".to_string(),
+                "codex_eyes_search".to_string(),
+                "codex_eyes_find".to_string(),
+                "codex_eyes_find_fuzzy".to_string(),
+                "codex_eyes_read".to_string(),
+                "codex_eyes_cargo_check".to_string(),
+                "codex_eyes_undo".to_string(),
+                "ast_explain".to_string(),
+                "task_create".to_string(),
+                "task_step".to_string(),
+                "task_complete".to_string(),
+                "task_list".to_string(),
+                "task_abort".to_string(),
+            ],
+            prompt: SYSTEM_PROMPT.to_string(),
+            aliases: vec!["all".to_string()],
+        },
+    ]
+}
 
 pub struct PatchAgent {
     client: LLMClient,
@@ -346,6 +349,7 @@ pub struct PatchAgent {
     tools: Vec<Value>,
     pub session: Session,
     pub active_skill_group: usize,
+    pub skill_groups: Vec<SkillGroup>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
     pub system_prompt_override: Option<String>,
 }
@@ -361,8 +365,27 @@ impl PatchAgent {
             None
         };
 
+        // Load skill groups from config, falling back to defaults
+        let skill_groups = if config.repl.skills.is_empty() {
+            default_skill_groups()
+        } else {
+            config
+                .repl
+                .skills
+                .iter()
+                .map(|s| SkillGroup {
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    emoji: s.emoji.clone(),
+                    tools: s.tools.clone(),
+                    prompt: s.prompt.clone(),
+                    aliases: s.aliases.clone(),
+                })
+                .collect()
+        };
+
         let idx = 0;
-        let base_prompt = SKILL_GROUPS[idx].prompt;
+        let base_prompt = &skill_groups[idx].prompt;
         let initial_prompt = if idx != 0 {
             if let Some(over) = &system_prompt_override {
                 over.clone()
@@ -381,6 +404,7 @@ impl PatchAgent {
             tools,
             session,
             active_skill_group: 0,
+            skill_groups,
             event_tx: None,
             system_prompt_override,
         }
@@ -397,13 +421,14 @@ impl PatchAgent {
     }
 
     pub fn set_skill_group(&mut self, index: usize) -> usize {
-        let idx = index.min(SKILL_GROUPS.len() - 1);
+        if self.skill_groups.is_empty() {
+            return 0;
+        }
+        let idx = index.min(self.skill_groups.len() - 1);
         self.active_skill_group = idx;
         if let Some(msg) = self.session.messages.first_mut() {
-            msg["content"] = json!(SKILL_GROUPS[idx].prompt);
+            msg["content"] = json!(self.skill_groups[idx].prompt);
         }
-        // Clear history when switching to Chat mode (no tools)
-        // to avoid sending stale tool calls to the LLM
         if idx == 0 && self.session.messages.len() > 1 {
             let system_msg = self.session.messages[0].clone();
             self.session.messages.clear();
@@ -414,7 +439,7 @@ impl PatchAgent {
 
     pub fn set_skill_group_by_name(&mut self, name: &str) -> Option<usize> {
         let name_lower = name.to_lowercase();
-        let idx = SKILL_GROUPS.iter().position(|g| {
+        let idx = self.skill_groups.iter().position(|g| {
             g.name.to_lowercase() == name_lower
                 || g.aliases.iter().any(|a| a.to_lowercase() == name_lower)
         })?;
@@ -423,13 +448,19 @@ impl PatchAgent {
     }
 
     pub fn cycle_skill_group(&mut self) -> usize {
-        let next = (self.active_skill_group + 1) % SKILL_GROUPS.len();
+        if self.skill_groups.is_empty() {
+            return 0;
+        }
+        let next = (self.active_skill_group + 1) % self.skill_groups.len();
         self.set_skill_group(next)
     }
 
     pub fn toggle_skills(&mut self) -> bool {
+        if self.skill_groups.is_empty() {
+            return false;
+        }
         if self.active_skill_group == 0 {
-            self.set_skill_group(7); // Switch to Full
+            self.set_skill_group(self.skill_groups.len() - 1); // Switch to last group (usually Full)
         } else {
             self.set_skill_group(0); // Switch to Chat
         }
@@ -437,7 +468,10 @@ impl PatchAgent {
     }
 
     pub fn active_tools(&self) -> Vec<Value> {
-        let group = &SKILL_GROUPS[self.active_skill_group];
+        if self.skill_groups.is_empty() {
+            return vec![];
+        }
+        let group = &self.skill_groups[self.active_skill_group];
         if group.tools.is_empty() {
             return vec![];
         }
@@ -445,7 +479,7 @@ impl PatchAgent {
             .iter()
             .filter(|t| {
                 let name = t["function"]["name"].as_str().unwrap_or("");
-                group.tools.contains(&name) || !BUILT_IN_TOOL_NAMES.contains(&name)
+                group.tools.iter().any(|tn| tn == name) || !BUILT_IN_TOOL_NAMES.contains(&name)
             })
             .cloned()
             .collect()

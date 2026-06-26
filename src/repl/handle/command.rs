@@ -2,7 +2,6 @@
 //! Command-mode key handling, `:command` execution, sed apply, help.
 
 use super::super::*;
-use crate::agent::SKILL_GROUPS;
 use crate::repl::buffer::{BufferLine, LineStyle, ResponseBuffer};
 use crate::repl::misc::{highlight_segments, unquote};
 use crate::repl::{CommandResult, Mode};
@@ -598,14 +597,23 @@ impl Repl {
             }
             "status" => {
                 let skill_idx = self.active_skill_group();
-                let group = &SKILL_GROUPS[skill_idx];
+                let groups = self.skill_groups();
+                let group_emoji = groups
+                    .get(skill_idx)
+                    .map(|g| g.emoji.clone())
+                    .unwrap_or_default();
+                let group_name = groups
+                    .get(skill_idx)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+
                 self.push_command_info("  📊 Status:", LineStyle::Info);
                 self.push_command_info(
                     format!("    Model: {}", self.config.server.model),
                     LineStyle::Plain,
                 );
                 self.push_command_info(
-                    format!("    Skill: {} {} [{}]", group.emoji, group.name, skill_idx),
+                    format!("    Skill: {} {} [{}]", group_emoji, group_name, skill_idx),
                     LineStyle::Plain,
                 );
                 if !self.waiting {

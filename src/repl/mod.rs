@@ -7,7 +7,7 @@ pub mod helper;
 pub mod misc;
 pub mod mode;
 
-use crate::agent::{PatchAgent, SKILL_GROUPS};
+use crate::agent::PatchAgent;
 use crate::config::AppConfig;
 use buffer::{BufferLine, LineStyle, ResponseBuffer};
 use crossterm::{
@@ -141,6 +141,10 @@ impl Repl {
             last_visual_mode: None,
             pending_snippet: None,
         }
+    }
+
+    pub(crate) fn skill_groups(&self) -> &[crate::agent::SkillGroup] {
+        &self.agent_ref().skill_groups
     }
 
     // ── buffer accessors ──────────────────────────────────────────
@@ -643,7 +647,7 @@ impl Repl {
         let mode_str = self.mode.as_str();
         let mode_color = self.mode.status_color();
         let skill_idx = self.active_skill_group();
-        let skill = &SKILL_GROUPS[skill_idx];
+        let skill = &self.skill_groups()[skill_idx];
         let buffer_name = self.buffer().name();
         let max_name_len = 20;
         let truncated_name = if UnicodeWidthStr::width(buffer_name) > max_name_len {
@@ -802,8 +806,12 @@ impl Repl {
                     s.to_string()
                 }
             };
+            let groups = self.skill_groups();
             let get_item = |key: &str, name: &str, idx: Option<usize>| -> String {
-                let emoji = idx.map(|i| SKILL_GROUPS[i].emoji).unwrap_or("");
+                let emoji = idx
+                    .and_then(|i| groups.get(i))
+                    .map(|g| g.emoji.as_str())
+                    .unwrap_or("");
                 pad_item(&format!("{}: {}{}", key, emoji, name))
             };
             let line1_str = format!(

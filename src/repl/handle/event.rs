@@ -2,7 +2,7 @@
 //! Main event loop + LLM submission.
 
 use super::super::*;
-use crate::agent::{AgentEvent, PatchAgent, SKILL_GROUPS};
+use crate::agent::{AgentEvent, PatchAgent};
 use crate::repl::buffer::{BufferLine, LineStyle};
 use crate::repl::misc;
 use crate::repl::CommandResult;
@@ -258,15 +258,27 @@ impl Repl {
             "debug ",
         ];
         let is_code_request = code_keywords.iter().any(|kw| input_lower.starts_with(kw));
+
+        // Inside submit_input, replace the is_code_request block with:
         if is_code_request && self.active_skill_group() == 0 {
             if self.config.repl.auto_enable_tools_on_code_request {
-                self.agent_mut().set_skill_group(5);
-                self.cached_skill_group = 5;
-                let group = &SKILL_GROUPS[5];
+                let (code_idx, group_name) = {
+                    let groups = self.skill_groups();
+                    let code_idx = groups.iter().position(|g| g.name == "Code").unwrap_or(5);
+                    let code_idx = code_idx.min(groups.len().saturating_sub(1));
+                    let group_name = groups
+                        .get(code_idx)
+                        .map(|g| g.name.clone())
+                        .unwrap_or_default();
+                    (code_idx, group_name)
+                };
+
+                self.agent_mut().set_skill_group(code_idx);
+                self.cached_skill_group = code_idx;
                 self.push_llm_line(
                     format!(
                         "  ✨ Auto-switched to '{}' mode for code request.",
-                        group.name
+                        group_name
                     ),
                     LineStyle::ToolResult,
                 );

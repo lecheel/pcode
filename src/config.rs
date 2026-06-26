@@ -5,6 +5,18 @@ use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SkillGroupConfig {
+    pub name: String,
+    pub description: String,
+    pub emoji: String,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    pub prompt: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
     #[serde(default)]
     pub server: ServerConfig,
@@ -221,6 +233,8 @@ pub struct ReplConfig {
     pub max_rounds: u32,
     #[serde(default = "default_true")]
     pub auto_enable_tools_on_code_request: bool,
+    #[serde(default)]
+    pub skills: Vec<SkillGroupConfig>,
 }
 
 impl Default for ReplConfig {
@@ -231,6 +245,7 @@ impl Default for ReplConfig {
             sessions_dir: default_sessions_dir(),
             max_rounds: default_max_rounds(),
             auto_enable_tools_on_code_request: true,
+            skills: Vec::new(),
         }
     }
 }

@@ -2,7 +2,6 @@
 //! Normal-mode key handling, `dd` deletion, word lookup.
 
 use super::super::*;
-use crate::agent::SKILL_GROUPS;
 use crate::repl::buffer::{BufferLine, LineStyle};
 use crate::repl::misc;
 use crate::repl::{CommandResult, Mode};
