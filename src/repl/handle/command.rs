@@ -123,6 +123,14 @@ impl Repl {
                     return Ok(CommandResult::Continue);
                 }
             }
+            "func" => {
+                if self.popup.active {
+                    self.popup.hide();
+                } else {
+                    self.show_function_list_popup();
+                }
+                self.render(stdout)?;
+            }
             "sed" => {
                 let arg = parts.get(1).copied().unwrap_or("");
                 if arg.is_empty() {

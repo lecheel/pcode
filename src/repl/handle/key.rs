@@ -130,6 +130,18 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
+        if key.code == KeyCode::F(7) {
+            if !self.waiting {
+                if self.popup.active {
+                    self.popup.hide();
+                } else {
+                    self.show_function_list_popup_legacy();
+                }
+                self.render(stdout)?;
+            }
+            return Ok(());
+        }
+
         if key.code == KeyCode::F(8) {
             if !self.waiting {
                 if self.popup.active {
