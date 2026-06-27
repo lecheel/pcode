@@ -4,7 +4,7 @@
 use super::super::*;
 use crate::repl::buffer::{BufferLine, LineStyle};
 use crate::repl::misc;
-use crate::repl::{CommandResult, Mode};
+use crate::repl::{CommandResult, Mode, RepeatAction};
 use crossterm::{
     cursor,
     event::{KeyCode, KeyEvent, KeyModifiers},
@@ -548,33 +548,44 @@ impl Repl {
                 self.render(stdout)?;
                 return Ok(());
             }
+            KeyCode::Char('.') => {
+                if let Some(action) = self.last_action {
+                    match action {
+                        RepeatAction::NextHunk => self.jump_hunk(1),
+                        RepeatAction::PrevHunk => self.jump_hunk(-1),
+                        RepeatAction::NextFunc => self.jump_func(1),
+                        RepeatAction::PrevFunc => self.jump_func(-1),
+                    }
+                }
+                self.count = None;
+            }
             KeyCode::Char('h') => {
                 if self.pending == Some(']') {
-                    // ]h — next hunk
-                    if let Some(hunks) = self.get_hunk_starts() {
-                        let current_line = self.buffer().cursor_line() + 1;
-                        if let Some(&target) = hunks.iter().find(|&&l| l > current_line) {
-                            self.buffer_mut().set_cursor(target - 1, 0);
-                            self.center_cursor();
-                        }
-                    }
+                    self.jump_hunk(1);
+                    self.last_action = Some(RepeatAction::NextHunk);
                     self.clear_pending();
                     self.count = None;
                 } else if self.pending == Some('[') {
-                    // [h — prev hunk
-                    if let Some(hunks) = self.get_hunk_starts() {
-                        let current_line = self.buffer().cursor_line() + 1;
-                        if let Some(&target) = hunks.iter().rev().find(|&&l| l < current_line) {
-                            self.buffer_mut().set_cursor(target - 1, 0);
-                            self.center_cursor();
-                        }
-                    }
+                    self.jump_hunk(-1);
+                    self.last_action = Some(RepeatAction::PrevHunk);
                     self.clear_pending();
                     self.count = None;
                 } else {
-                    // h — move left
                     self.buffer_mut().move_left();
                     self.ensure_cursor_visible();
+                    self.count = None;
+                }
+            }
+            KeyCode::Char('f') => {
+                if self.pending == Some(']') {
+                    self.jump_func(1);
+                    self.last_action = Some(RepeatAction::NextFunc);
+                    self.clear_pending();
+                    self.count = None;
+                } else if self.pending == Some('[') {
+                    self.jump_func(-1);
+                    self.last_action = Some(RepeatAction::PrevFunc);
+                    self.clear_pending();
                     self.count = None;
                 }
             }
@@ -838,6 +849,104 @@ impl Repl {
         } else {
             Some(word)
         }
+    }
+
+    pub(super) fn jump_hunk(&mut self, dir: i32) {
+        if let Some(hunks) = self.get_hunk_starts() {
+            let current_line = self.buffer().cursor_line() + 1;
+            let target = if dir > 0 {
+                hunks.iter().find(|&&l| l > current_line).copied()
+            } else {
+                hunks.iter().rev().find(|&&l| l < current_line).copied()
+            };
+            if let Some(t) = target {
+                self.buffer_mut().set_cursor(t - 1, 0);
+                self.center_cursor();
+            }
+        }
+    }
+
+    pub(super) fn jump_func(&mut self, dir: i32) {
+        let functions = self.get_function_starts();
+        let current_line = self.buffer().cursor_line();
+        let target = if dir > 0 {
+            functions.iter().find(|&&l| l > current_line).copied()
+        } else {
+            functions.iter().rev().find(|&&l| l < current_line).copied()
+        };
+        if let Some(t) = target {
+            self.buffer_mut().set_cursor(t, 0);
+            self.center_cursor();
+        }
+    }
+
+    fn get_function_starts(&self) -> Vec<usize> {
+        let lines = self.buffer().lines();
+        let content: String = lines
+            .iter()
+            .map(|l| l.content())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut starts = Vec::new();
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&language).is_ok() {
+            if let Some(tree) = parser.parse(&content, None) {
+                let mut nodes = Vec::new();
+                let mut stack = vec![tree.root_node()];
+                while let Some(node) = stack.pop() {
+                    let kind = node.kind();
+                    if matches!(
+                        kind,
+                        "function_item"
+                            | "struct_item"
+                            | "enum_item"
+                            | "trait_item"
+                            | "impl_item"
+                            | "macro_definition"
+                            | "mod_item"
+                            | "const_item"
+                    ) {
+                        nodes.push(node);
+                    }
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i as u32) {
+                            stack.push(child);
+                        }
+                    }
+                }
+                nodes.sort_by_key(|n| n.start_position().row);
+                nodes.dedup_by_key(|n| n.start_position().row);
+                for node in nodes {
+                    starts.push(node.start_position().row);
+                }
+            }
+        }
+        if starts.is_empty() {
+            for (i, line) in lines.iter().enumerate() {
+                let line_content = line.content();
+                let trimmed = line_content.trim_start();
+                if trimmed.starts_with("fn ")
+                    || trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("pub(crate) fn ")
+                    || trimmed.starts_with("pub(super) fn ")
+                    || trimmed.starts_with("async fn ")
+                    || trimmed.starts_with("pub async fn ")
+                    || trimmed.starts_with("impl ")
+                    || trimmed.starts_with("struct ")
+                    || trimmed.starts_with("enum ")
+                    || trimmed.starts_with("trait ")
+                    || trimmed.starts_with("def ")
+                    || trimmed.starts_with("function ")
+                    || trimmed.starts_with("export function ")
+                    || trimmed.starts_with("export async function ")
+                    || trimmed.starts_with("interface ")
+                {
+                    starts.push(i);
+                }
+            }
+        }
+        starts
     }
 
     pub(super) fn do_dd(&mut self, amount: usize) -> anyhow::Result<()> {

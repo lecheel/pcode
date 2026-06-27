@@ -398,16 +398,31 @@ impl super::Repl {
 
     pub(super) fn show_which_key_popup(&mut self, pending: char) {
         let items = match pending {
-            ']' => vec![PopupItem {
-                text: "h → next hunk".to_string(),
-                is_active: false,
-                id: None,
-            }],
-            '[' => vec![PopupItem {
-                text: "h → prev hunk".to_string(),
-                is_active: false,
-                id: None,
-            }],
+            ']' => vec![
+                PopupItem {
+                    text: "h → next hunk".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+                PopupItem {
+                    text: "f → next function".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+            ],
+            '[' => vec![
+                PopupItem {
+                    text: "h → prev hunk".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+                PopupItem {
+                    text: "f → prev function".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+            ],
+
             'd' => vec![PopupItem {
                 text: "d → delete line".to_string(),
                 is_active: false,

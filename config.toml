@@ -20,7 +20,7 @@ auto_verify = true
 codex_eyes_shell = true
 
 [debug]
-enabled = true
+enabled = false
 
 [repl]
 

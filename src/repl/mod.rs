@@ -57,6 +57,14 @@ pub(crate) enum CommandResult {
     ClearScreen,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum RepeatAction {
+    NextHunk,
+    PrevHunk,
+    NextFunc,
+    PrevFunc,
+}
+
 pub struct Repl {
     pub(crate) mode: Mode,
     pub(crate) buffers: Vec<ResponseBuffer>,
@@ -92,6 +100,7 @@ pub struct Repl {
     pub(crate) selection_start: Option<(usize, usize)>,
     pub(crate) last_visual_mode: Option<Mode>,
     pub(crate) pending_snippet: Option<String>,
+    pub(crate) last_action: Option<RepeatAction>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -142,6 +151,7 @@ impl Repl {
             selection_start: None,
             last_visual_mode: None,
             pending_snippet: None,
+            last_action: None,
         }
     }
 
