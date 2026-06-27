@@ -21,3 +21,5 @@ dirs = "5"
 arboard = "3.6.1"
 chrono = { version = "0.4", features = ["serde"] }
 git2 = { version = "0.18", default-features = false }
+tree-sitter = "0.26.9"
+tree-sitter-rust = "0.24.2"

@@ -47,6 +47,7 @@ pub enum PopupMode {
     TaskFilePicker,
     Buffers,
     GitHunks,
+    FunctionList,
 }
 
 pub(crate) enum CommandResult {
@@ -842,7 +843,7 @@ impl Repl {
             let line2_str = format!(
                 "{}{}{}{}{}{}",
                 get_skill_str(" F7", "--NA"),
-                get_skill_str(" F8", "--NA"),
+                get_skill_str(" F8", "Func"),
                 get_skill_str(" F9", "--NA"),
                 get_skill_str("F10", "Skills"),
                 get_skill_str("F11", "Prompt"),

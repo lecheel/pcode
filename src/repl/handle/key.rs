@@ -130,6 +130,18 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
+        if key.code == KeyCode::F(8) {
+            if !self.waiting {
+                if self.popup.active {
+                    self.popup.hide();
+                } else {
+                    self.show_function_list_popup();
+                }
+                self.render(stdout)?;
+            }
+            return Ok(());
+        }
+
         if key.code == KeyCode::F(11) {
             self.execute_command("workflow", stdout)?;
             self.render(stdout)?;

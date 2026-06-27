@@ -57,6 +57,14 @@ impl Repl {
                                 }
                             }
                         }
+                        PopupMode::FunctionList => {
+                            if let Some(item) = self.popup.items.get(self.popup.cursor) {
+                                if let Some(line_num) = item.id {
+                                    self.buffer_mut().set_cursor(line_num, 0);
+                                    self.center_cursor();
+                                }
+                            }
+                        }
                     }
                 }
                 self.popup.hide();
@@ -90,6 +98,144 @@ impl Repl {
             _ => {}
         }
         self.render(stdout)
+    }
+
+    pub(super) fn show_function_list_popup(&mut self) {
+        let lines = self.buffer().lines();
+        let content: String = lines
+            .iter()
+            .map(|l| l.content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut items = Vec::new();
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+
+        if parser.set_language(&language).is_ok() {
+            if let Some(tree) = parser.parse(&content, None) {
+                let mut nodes = Vec::new();
+                let mut stack = vec![tree.root_node()];
+
+                while let Some(node) = stack.pop() {
+                    let kind = node.kind();
+                    if matches!(
+                        kind,
+                        "function_item"
+                            | "struct_item"
+                            | "enum_item"
+                            | "trait_item"
+                            | "impl_item"
+                            | "macro_definition"
+                            | "mod_item"
+                            | "const_item"
+                    ) {
+                        nodes.push(node);
+                    }
+
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i as u32) {
+                            stack.push(child);
+                        }
+                    }
+                }
+
+                nodes.sort_by_key(|n| n.start_position().row);
+                nodes.dedup_by_key(|n| n.start_position().row);
+
+                for node in nodes {
+                    let start_row = node.start_position().row;
+                    if let Some(line) = lines.get(start_row) {
+                        let line_text = line.content().trim().to_string();
+                        let display_text = if line_text.chars().count() > 80 {
+                            let truncated: String = line_text.chars().take(77).collect();
+                            format!("{}...", truncated)
+                        } else {
+                            line_text
+                        };
+                        items.push(PopupItem {
+                            text: format!("L{:>4}: {}", start_row + 1, display_text),
+                            is_active: start_row == self.buffer().cursor_line(),
+                            id: Some(start_row),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Fallback to string matching if tree-sitter fails
+        if items.is_empty() {
+            for (i, line) in lines.iter().enumerate() {
+                let line_content = line.content();
+                let trimmed = line_content.trim_start();
+                if trimmed.starts_with("fn ")
+                    || trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("pub(crate) fn ")
+                    || trimmed.starts_with("pub(super) fn ")
+                    || trimmed.starts_with("async fn ")
+                    || trimmed.starts_with("pub async fn ")
+                    || trimmed.starts_with("impl ")
+                    || trimmed.starts_with("struct ")
+                    || trimmed.starts_with("enum ")
+                    || trimmed.starts_with("trait ")
+                {
+                    let display_text = if line_content.chars().count() > 80 {
+                        let truncated: String = line_content.chars().take(77).collect();
+                        format!("{}...", truncated)
+                    } else {
+                        line_content.clone()
+                    };
+                    items.push(PopupItem {
+                        text: format!("L{:>4}: {}", i + 1, display_text),
+                        is_active: i == self.buffer().cursor_line(),
+                        id: Some(i),
+                    });
+                }
+            }
+        }
+
+        self.popup_mode = PopupMode::FunctionList;
+        self.popup.show("Symbols", items, 0, PopupPosition::Center);
+    }
+
+    pub(super) fn show_function_list_popup_legacy(&mut self) {
+        let lines = self.buffer().lines();
+        let mut items = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            let content = line.content();
+            let trimmed = content.trim_start();
+            if trimmed.starts_with("fn ")
+                || trimmed.starts_with("pub fn ")
+                || trimmed.starts_with("pub(crate) fn ")
+                || trimmed.starts_with("pub(super) fn ")
+                || trimmed.starts_with("async fn ")
+                || trimmed.starts_with("pub async fn ")
+                || trimmed.starts_with("def ")
+                || trimmed.starts_with("function ")
+                || trimmed.starts_with("export function ")
+                || trimmed.starts_with("export async function ")
+                || trimmed.starts_with("impl ")
+                || trimmed.starts_with("struct ")
+                || trimmed.starts_with("enum ")
+                || trimmed.starts_with("trait ")
+                || trimmed.starts_with("interface ")
+            {
+                let display_text = if content.chars().count() > 80 {
+                    let truncated: String = content.chars().take(77).collect();
+                    format!("{}...", truncated)
+                } else {
+                    content.clone()
+                };
+                items.push(PopupItem {
+                    text: format!("L{:>4}: {}", i + 1, display_text),
+                    is_active: i == self.buffer().cursor_line(),
+                    id: Some(i),
+                });
+            }
+        }
+        self.popup_mode = PopupMode::FunctionList;
+        self.popup
+            .show("Functions", items, 0, PopupPosition::Center);
     }
 
     pub(super) fn show_file_picker(&mut self) {
