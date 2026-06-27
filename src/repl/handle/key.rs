@@ -225,8 +225,7 @@ impl Repl {
             }
             return Ok(());
         }
-
-        if self.popup.active {
+        if self.popup.active && self.popup_mode != PopupMode::WhichKey {
             return self.handle_popup_key(key, stdout);
         }
         if matches!(self.mode, Mode::Command) {

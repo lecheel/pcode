@@ -48,6 +48,7 @@ pub enum PopupMode {
     Buffers,
     GitHunks,
     FunctionList,
+    WhichKey,
 }
 
 pub(crate) enum CommandResult {

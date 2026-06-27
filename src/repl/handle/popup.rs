@@ -65,6 +65,9 @@ impl Repl {
                                 }
                             }
                         }
+                        PopupMode::WhichKey => {
+                            // WhichKey popup is not interactive; handled by normal mode
+                        }
                     }
                 }
                 self.popup.hide();

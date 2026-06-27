@@ -5,6 +5,7 @@ use std::io;
 pub enum PopupPosition {
     Center,
     Bottom,
+    BottomRight,
 }
 
 fn disp_width(s: &str) -> usize {
@@ -36,6 +37,7 @@ pub struct Popup {
     pub max_height: usize,
     pub position: PopupPosition,
     pub show_filter: bool,
+    pub compact: bool,
 }
 impl Popup {
     pub fn new() -> Self {
@@ -49,6 +51,7 @@ impl Popup {
             max_height: 15,
             position: PopupPosition::Center,
             show_filter: true,
+            compact: false,
         }
     }
 
@@ -69,6 +72,7 @@ impl Popup {
         self.max_height = len.max(1).min(15);
         self.position = position;
         self.show_filter = true;
+        self.compact = false;
     }
     pub fn hide(&mut self) {
         self.active = false;
@@ -117,7 +121,6 @@ impl Popup {
         }
         let num_items = self.items.len();
         let visible_items = self.max_height.max(1);
-
         let scroll_offset = if num_items <= visible_items {
             0
         } else if self.cursor < visible_items {
@@ -125,7 +128,6 @@ impl Popup {
         } else {
             self.cursor - visible_items + 1
         };
-
         let rendered_lines: Vec<String> = if num_items == 0 {
             vec![format!("   No matches for '{}'", self.filter)]
         } else {
@@ -138,7 +140,6 @@ impl Popup {
                 })
                 .collect()
         };
-
         let term_width = width as usize;
         let preferred_width = (term_width * 90) / 100;
         let max_content_width = rendered_lines
@@ -147,8 +148,11 @@ impl Popup {
             .max()
             .unwrap_or(20)
             .max(20);
-
-        let inner_width = if self.show_filter {
+        // CHANGED: support compact mode (no expansion to preferred_width)
+        let inner_width = if self.compact {
+            // max_content_width.min(term_width)
+            max_content_width.max(40).min(term_width)
+        } else if self.show_filter {
             let filter_line = format!(" Filter: {} ", self.filter);
             let max_filter_width = disp_width(&filter_line);
             preferred_width
@@ -158,14 +162,20 @@ impl Popup {
         } else {
             preferred_width.max(max_content_width).min(term_width)
         };
-
         let box_width = inner_width + 2;
         let box_height = (visible_items + if self.show_filter { 3 } else { 2 }) as u16;
-
-        let col = (width.saturating_sub(box_width as u16)) / 2;
+        // CHANGED: position BottomRight
+        let col = match self.position {
+            PopupPosition::Center | PopupPosition::Bottom => {
+                (width.saturating_sub(box_width as u16)) / 2
+            }
+            PopupPosition::BottomRight => width.saturating_sub(box_width as u16).saturating_sub(1),
+        };
         let row = match self.position {
             PopupPosition::Center => (height.saturating_sub(box_height)) / 2,
-            PopupPosition::Bottom => height.saturating_sub(box_height).saturating_sub(2),
+            PopupPosition::Bottom | PopupPosition::BottomRight => {
+                height.saturating_sub(box_height).saturating_sub(2)
+            }
         };
 
         let title_disp = disp_width(&self.title);
@@ -384,6 +394,48 @@ impl super::Repl {
         );
         self.scroll_to_bottom();
         self.render(stdout)
+    }
+
+    pub(super) fn show_which_key_popup(&mut self, pending: char) {
+        let items = match pending {
+            ']' => vec![PopupItem {
+                text: "h → next hunk".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            '[' => vec![PopupItem {
+                text: "h → prev hunk".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            'd' => vec![PopupItem {
+                text: "d → delete line".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            'g' => vec![PopupItem {
+                text: "g → go to top".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            'y' => vec![PopupItem {
+                text: "y → yank line".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            'z' => vec![PopupItem {
+                text: "z → center cursor".to_string(),
+                is_active: false,
+                id: None,
+            }],
+            _ => return,
+        };
+        let title = format!("{}", pending);
+        self.popup_mode = super::PopupMode::WhichKey;
+        self.popup
+            .show(&title, items, 0, PopupPosition::BottomRight);
+        self.popup.show_filter = false;
+        self.popup.compact = true;
     }
 
     pub(super) fn show_skill_group_popup(&mut self) {

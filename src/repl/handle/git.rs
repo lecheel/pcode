@@ -25,7 +25,24 @@ impl Repl {
         }
         Some(std::path::PathBuf::from(path_str))
     }
-
+    pub(crate) fn get_hunk_starts(&self) -> Option<Vec<usize>> {
+        let gutter = self.get_git_gutter()?;
+        let mut starts = Vec::new();
+        let mut in_hunk = false;
+        for (i, &c) in gutter.iter().enumerate() {
+            if c == '+' && !in_hunk {
+                starts.push(i + 1); // 1-based line number
+                in_hunk = true;
+            } else if c != '+' {
+                in_hunk = false;
+            }
+        }
+        if starts.is_empty() {
+            None
+        } else {
+            Some(starts)
+        }
+    }
     pub(crate) fn get_git_gutter(&self) -> Option<Vec<char>> {
         let buffer_name = self.buffer().name();
         if buffer_name == "Chat"

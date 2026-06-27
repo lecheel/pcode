@@ -359,7 +359,7 @@ impl Repl {
                 _ => {}
             }
             self.count = None;
-            self.pending = None;
+            self.clear_pending();
             self.render(stdout)?;
             return Ok(());
         }
@@ -369,7 +369,7 @@ impl Repl {
                 if self.buffer().name() == "SedChanges" {
                     self.apply_sed_changes(stdout)?;
                     self.count = None;
-                    self.pending = None;
+                    self.clear_pending();
                     return Ok(());
                 }
                 self.count = None;
@@ -495,14 +495,14 @@ impl Repl {
                 self.mode = Mode::Search;
                 self.cmd_editor.clear();
                 self.count = None;
-                self.pending = None;
+                self.clear_pending();
                 self.render_spinner_only(stdout)?;
                 return Ok(());
             }
             KeyCode::Char('?') => {
                 self.fkey_help = !self.fkey_help;
                 self.count = None;
-                self.pending = None;
+                self.clear_pending();
                 self.render(stdout)?;
                 return Ok(());
             }
@@ -536,6 +536,48 @@ impl Repl {
             }
             KeyCode::PageDown => self.half_page_down(),
             KeyCode::PageUp => self.half_page_up(),
+            KeyCode::Char(']') => {
+                self.pending = Some(']');
+                self.show_which_key_popup(']');
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('[') => {
+                self.pending = Some('[');
+                self.show_which_key_popup('[');
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('h') => {
+                if self.pending == Some(']') {
+                    // ]h — next hunk
+                    if let Some(hunks) = self.get_hunk_starts() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        if let Some(&target) = hunks.iter().find(|&&l| l > current_line) {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.center_cursor();
+                        }
+                    }
+                    self.clear_pending();
+                    self.count = None;
+                } else if self.pending == Some('[') {
+                    // [h — prev hunk
+                    if let Some(hunks) = self.get_hunk_starts() {
+                        let current_line = self.buffer().cursor_line() + 1;
+                        if let Some(&target) = hunks.iter().rev().find(|&&l| l < current_line) {
+                            self.buffer_mut().set_cursor(target - 1, 0);
+                            self.center_cursor();
+                        }
+                    }
+                    self.clear_pending();
+                    self.count = None;
+                } else {
+                    // h — move left
+                    self.buffer_mut().move_left();
+                    self.ensure_cursor_visible();
+                    self.count = None;
+                }
+            }
             KeyCode::Char('l') => {
                 if let Some(lines) = self.get_git_gutter_lines() {
                     if !lines.is_empty() {
@@ -569,10 +611,10 @@ impl Repl {
             KeyCode::Char('z') => {
                 if self.pending == Some('z') {
                     self.center_cursor();
-                    self.pending = None;
+                    self.clear_pending();
                     self.count = None;
                 } else {
-                    self.pending = Some('z');
+                    self.show_which_key_popup('z');
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -642,10 +684,11 @@ impl Repl {
             KeyCode::Char('g') => {
                 if self.pending == Some('g') {
                     self.buffer_mut().move_top();
-                    self.pending = None;
+                    self.clear_pending();
                     self.count = None;
                 } else {
                     self.pending = Some('g');
+                    self.show_which_key_popup('g');
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -674,10 +717,11 @@ impl Repl {
                         self.set_cursor(cursor_line, cursor_col);
                         self.scroll_to_bottom_view();
                     }
-                    self.pending = None;
+                    self.clear_pending();
                     self.count = None;
                 } else {
                     self.pending = Some('y');
+                    self.show_which_key_popup('y');
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -687,10 +731,11 @@ impl Repl {
                 if self.pending == Some('d') {
                     let amount = self.count.unwrap_or(1);
                     self.do_dd(amount)?;
-                    self.pending = None;
+                    self.clear_pending();
                     self.count = None;
                 } else {
                     self.pending = Some('d');
+                    self.show_which_key_popup('d');
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -719,7 +764,7 @@ impl Repl {
                 let digit = c.to_digit(10).unwrap() as usize;
                 if self.count.is_some() || c != '0' {
                     self.count = Some(self.count.unwrap_or(0) * 10 + digit);
-                    self.pending = None;
+                    self.clear_pending();
                     self.render(stdout)?;
                     return Ok(());
                 }
@@ -730,7 +775,7 @@ impl Repl {
                 self.selection_start =
                     Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
                 self.count = None;
-                self.pending = None;
+                self.clear_pending();
                 self.render(stdout)?;
                 return Ok(());
             }
@@ -740,7 +785,7 @@ impl Repl {
                 self.selection_start =
                     Some((self.buffer().cursor_line(), self.buffer().cursor_col()));
                 self.count = None;
-                self.pending = None;
+                self.clear_pending();
                 self.render(stdout)?;
                 return Ok(());
             }
@@ -748,7 +793,7 @@ impl Repl {
                 self.count = None;
             }
         }
-        self.pending = None;
+        self.clear_pending();
         self.render(stdout)
     }
 
@@ -870,5 +915,11 @@ impl Repl {
             }
         }
         Ok(())
+    }
+    fn clear_pending(&mut self) {
+        if self.popup_mode == PopupMode::WhichKey && self.popup.active {
+            self.popup.hide();
+        }
+        self.pending = None;
     }
 }
