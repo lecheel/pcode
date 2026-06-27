@@ -115,6 +115,13 @@ impl Repl {
             }
         }
         if key.code == KeyCode::F(12) {
+            if self.pending_snippet.take().is_some() {
+                self.editor.clear();
+                self.push_info("  ❌ Cancelled snippet input.", LineStyle::Dim);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
             if self.waiting {
                 if let Some(tx) = self.cancel_tx.take() {
                     let _ = tx.send(());
