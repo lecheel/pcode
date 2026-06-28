@@ -951,7 +951,8 @@ impl Repl {
                 }
 
                 self.buffer_mut().move_top();
-                // self.ensure_cursor_visible();
+                self.ensure_cursor_visible();
+                return Ok(CommandResult::Continue);
             }
             "gs" => {
                 self.show_git_status(stdout, None)?;

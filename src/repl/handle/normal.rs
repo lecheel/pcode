@@ -204,8 +204,10 @@ impl Repl {
                         .arg(&hash)
                         .output();
 
-                    let new_buf_idx = if self.buffer().name() == "GitCommit" {
-                        self.active_buffer
+                    let new_buf_idx = if let Some(idx) =
+                        self.buffers.iter().position(|b| b.name() == "GitCommit")
+                    {
+                        idx
                     } else {
                         let idx = self.buffers.len();
                         self.buffers.push(ResponseBuffer::with_name("GitCommit"));
