@@ -8,7 +8,7 @@ pub const COMMAND_LIST: &[&str] = &[
     "quit", "q", "exit", "help", "h", "?", "save", "load", "sessions", "delete", "rm", "reset",
     "config", "tools", "debug", "status", "cls", "clear", "skills", "rg", "grep", "fd", "find",
     "ls", "cancel", "bn", "bp", "bd", "open", "e", "saveas", "write", "workflow", "gs", "sed",
-    "func",
+    "func", "glog",
 ];
 
 /// Current wall-clock time as `HH:MM:SS` (local-ish, derived from UNIX_EPOCH).

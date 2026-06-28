@@ -186,6 +186,54 @@ impl Repl {
             }
         }
 
+        if key.code == KeyCode::Enter && self.buffer().name() == "GitLog" {
+            let cursor_line = self.buffer().cursor_line();
+            if let Some(line) = self.buffer().lines().get(cursor_line) {
+                let content = line.content().trim().to_string();
+                let mut hash_opt = None;
+                for part in content.split_whitespace() {
+                    if part.len() >= 7 && part.chars().all(|c| c.is_ascii_hexdigit()) {
+                        hash_opt = Some(part.to_string());
+                        break;
+                    }
+                }
+
+                if let Some(hash) = hash_opt {
+                    let output = std::process::Command::new("git")
+                        .arg("show")
+                        .arg(&hash)
+                        .output();
+
+                    let new_buf_idx = if self.buffer().name() == "GitCommit" {
+                        self.active_buffer
+                    } else {
+                        let idx = self.buffers.len();
+                        self.buffers.push(ResponseBuffer::with_name("GitCommit"));
+                        idx
+                    };
+                    self.active_buffer = new_buf_idx;
+                    self.buffers[new_buf_idx].clear();
+
+                    if let Ok(out) = output {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        for line in s.lines() {
+                            self.buffers[new_buf_idx]
+                                .push(BufferLine::new(line.to_string(), LineStyle::Plain));
+                        }
+                    } else {
+                        self.buffers[new_buf_idx].push(BufferLine::new(
+                            "  Failed to run git show",
+                            LineStyle::Error,
+                        ));
+                    }
+
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            }
+        }
+
         if self.buffer().name() == "GitStatus" {
             match key.code {
                 KeyCode::Char('q') => {

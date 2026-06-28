@@ -870,6 +870,40 @@ impl Repl {
                     }
                 }
             }
+            "glog" => {
+                let output = std::process::Command::new("git")
+                    .arg("log")
+                    .arg("--graph")
+                    .arg("--oneline")
+                    .arg("--all")
+                    .output();
+
+                let new_buf_idx = if self.buffer().name() == "GitLog" {
+                    self.active_buffer
+                } else {
+                    let idx = self.buffers.len();
+                    self.buffers.push(ResponseBuffer::with_name("GitLog"));
+                    idx
+                };
+                self.active_buffer = new_buf_idx;
+                self.buffers[new_buf_idx].clear();
+
+                let c_idx = self.console_buffer_idx();
+                self.buffers[c_idx].push(BufferLine::new("  🌳 GitLog", LineStyle::Info));
+
+                if let Ok(out) = output {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    for line in s.lines() {
+                        self.buffers[new_buf_idx]
+                            .push(BufferLine::new(line.to_string(), LineStyle::Plain));
+                    }
+                } else {
+                    self.buffers[new_buf_idx]
+                        .push(BufferLine::new("  Failed to run git log", LineStyle::Error));
+                }
+
+                self.scroll_to_bottom();
+            }
             "gs" => {
                 self.show_git_status(stdout, None)?;
             }
