@@ -1,4 +1,3 @@
-// === FILE:src/patch.rs =====
 use std::path::{Path, PathBuf};
 
 fn path_contains_blocked_dir(path: &Path) -> bool {
@@ -86,6 +85,34 @@ fn validate_path(
     ))
 }
 
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut dp = vec![vec![0; b_chars.len() + 1]; a_chars.len() + 1];
+
+    for i in 0..=a_chars.len() {
+        dp[i][0] = i;
+    }
+    for j in 0..=b_chars.len() {
+        dp[0][j] = j;
+    }
+
+    for i in 1..=a_chars.len() {
+        for j in 1..=b_chars.len() {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+
+    dp[a_chars.len()][b_chars.len()]
+}
+
 pub fn apply_patch(
     path: &str,
     patch_text: &str,
@@ -111,18 +138,35 @@ pub fn apply_patch(
     while let Some(line) = lines.next() {
         if line.trim() == "<<<<<<< SEARCH" {
             let mut search = Vec::new();
+            let mut found_separator = false;
             while let Some(l) = lines.next() {
                 if l.trim() == "=======" {
+                    found_separator = true;
                     break;
                 }
                 search.push(l);
             }
+            if !found_separator {
+                return Err(format!(
+                    "Malformed patch: Missing '=======' separator in {}",
+                    path
+                ));
+            }
+
             let mut replace = Vec::new();
+            let mut found_terminator = false;
             while let Some(l) = lines.next() {
                 if l.trim() == ">>>>>>> REPLACE" {
+                    found_terminator = true;
                     break;
                 }
                 replace.push(l);
+            }
+            if !found_terminator {
+                return Err(format!(
+                    "Malformed patch: Missing '>>>>>>> REPLACE' terminator in {}",
+                    path
+                ));
             }
 
             let search_str = search.join("\n");
@@ -142,7 +186,10 @@ pub fn apply_patch(
                 let search_lines: Vec<&str> = search_str.lines().collect();
 
                 if search_lines.is_empty() || search_lines.len() > file_lines.len() {
-                    return Err("SEARCH block not found (and too large for file)".to_string());
+                    return Err(format!(
+                        "SEARCH block not found in {}. The search block is larger than the file or empty.",
+                        path
+                    ));
                 }
 
                 let mut match_indices = Vec::new();
@@ -209,10 +256,24 @@ pub fn apply_patch(
                     }
                     count += 1;
                 } else if match_indices.is_empty() {
+                    // Provide closest match context for easier debugging
+                    let first_search_line = search_lines.get(0).map(|s| s.trim()).unwrap_or("");
+                    let mut closest_line = 0;
+                    let mut min_distance = usize::MAX;
+                    for (i, l) in file_lines.iter().enumerate() {
+                        let dist = levenshtein_distance(l.trim(), first_search_line);
+                        if dist < min_distance {
+                            min_distance = dist;
+                            closest_line = i;
+                        }
+                    }
+
                     return Err(format!(
-                        "SEARCH block not found in {}.\nExpected:\n{}\nMake sure the text matches the code exactly.",
-                        path, search_str
-                    ));
+                        "SEARCH block not found in {}.\nExpected:\n{}\nMake sure the text matches the code exactly.\nClosest match at line {}: {}",
+                        path,
+                        search_str,
+                        closest_line + 1,
+                        file_lines.get(closest_line).unwrap_or(&"")));
                 } else {
                     return Err(format!(
                         "Ambiguous match: SEARCH block found {} times in {}. Add more surrounding context lines to make it unique.",
