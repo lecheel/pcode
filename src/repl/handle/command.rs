@@ -894,15 +894,64 @@ impl Repl {
                 if let Ok(out) = output {
                     let s = String::from_utf8_lossy(&out.stdout);
                     for line in s.lines() {
-                        self.buffers[new_buf_idx]
-                            .push(BufferLine::new(line.to_string(), LineStyle::Plain));
+                        let mut segments = Vec::new();
+
+                        let mut graph_end = line.len();
+                        for (i, c) in line.char_indices() {
+                            if c.is_alphanumeric() {
+                                graph_end = i;
+                                break;
+                            }
+                        }
+
+                        if graph_end > 0 {
+                            segments.push((line[..graph_end].to_string(), LineStyle::Dim));
+                        }
+
+                        let rest = &line[graph_end..];
+                        if let Some(space_idx) = rest.find(' ') {
+                            let hash = &rest[..space_idx];
+                            if !hash.is_empty() {
+                                segments.push((hash.to_string(), LineStyle::User));
+                            }
+
+                            let msg = &rest[space_idx..];
+                            if let Some(start) = msg.find('(') {
+                                if let Some(end) = msg.find(')') {
+                                    if start > 0 {
+                                        segments.push((msg[..start].to_string(), LineStyle::Plain));
+                                    }
+                                    segments.push((
+                                        msg[start..=end].to_string(),
+                                        LineStyle::ToolResult,
+                                    ));
+                                    if end + 1 < msg.len() {
+                                        segments
+                                            .push((msg[end + 1..].to_string(), LineStyle::Plain));
+                                    }
+                                } else {
+                                    segments.push((msg.to_string(), LineStyle::Plain));
+                                }
+                            } else {
+                                segments.push((msg.to_string(), LineStyle::Plain));
+                            }
+                        } else if !rest.is_empty() {
+                            segments.push((rest.to_string(), LineStyle::User));
+                        }
+
+                        if segments.is_empty() {
+                            segments.push((String::new(), LineStyle::Plain));
+                        }
+
+                        self.buffers[new_buf_idx].push(BufferLine::from_segments(segments));
                     }
                 } else {
                     self.buffers[new_buf_idx]
                         .push(BufferLine::new("  Failed to run git log", LineStyle::Error));
                 }
 
-                self.scroll_to_bottom();
+                self.buffer_mut().move_top();
+                // self.ensure_cursor_visible();
             }
             "gs" => {
                 self.show_git_status(stdout, None)?;

@@ -217,8 +217,34 @@ impl Repl {
                     if let Ok(out) = output {
                         let s = String::from_utf8_lossy(&out.stdout);
                         for line in s.lines() {
+                            let style = if line.starts_with("commit ") {
+                                LineStyle::User
+                            } else if line.starts_with("Author:")
+                                || line.starts_with("Date:")
+                                || line.starts_with("Merge:")
+                            {
+                                LineStyle::Info
+                            } else if line.starts_with("diff ") || line.starts_with("index ") {
+                                LineStyle::Info
+                            } else if line.starts_with("+++") || line.starts_with("---") {
+                                LineStyle::Tool
+                            } else if line.starts_with("@@") {
+                                LineStyle::Tool
+                            } else if line.starts_with("+") {
+                                LineStyle::ToolResult
+                            } else if line.starts_with("-") {
+                                LineStyle::Error
+                            } else {
+                                LineStyle::Plain
+                            };
+
+                            let prefix = if line.starts_with("+") || line.starts_with("-") {
+                                ""
+                            } else {
+                                ""
+                            };
                             self.buffers[new_buf_idx]
-                                .push(BufferLine::new(line.to_string(), LineStyle::Plain));
+                                .push(BufferLine::new(format!("{}{}", prefix, line), style));
                         }
                     } else {
                         self.buffers[new_buf_idx].push(BufferLine::new(
@@ -493,6 +519,21 @@ impl Repl {
                     let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
                     let _ = terminal::enable_raw_mode();
                     self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::Tab => {
+                let buf_name = self.buffer().name();
+                if buf_name == "GitCommit" {
+                    if let Some(idx) = self.buffers.iter().position(|b| b.name() == "GitLog") {
+                        self.active_buffer = idx;
+                        self.ensure_cursor_visible();
+                    }
+                } else if buf_name == "GitLog" {
+                    if let Some(idx) = self.buffers.iter().position(|b| b.name() == "GitCommit") {
+                        self.active_buffer = idx;
+                        self.ensure_cursor_visible();
+                    }
                 }
                 self.count = None;
             }
