@@ -817,7 +817,6 @@ impl Repl {
                             }
                         }
                         self.set_cursor(cursor_line, cursor_col);
-                        self.scroll_to_bottom_view();
                     }
                     self.clear_pending();
                     self.count = None;
@@ -849,7 +848,6 @@ impl Repl {
                 } else {
                     self.push_info("  Nothing to undo", LineStyle::Dim);
                 }
-                self.scroll_to_bottom_view();
                 self.ensure_cursor_visible();
                 self.count = None;
             }
@@ -1077,7 +1075,6 @@ impl Repl {
                 self.set_cursor(new_cursor, 0);
                 self.ensure_cursor_visible();
                 self.push_info("  🗑️  Discarded change", LineStyle::Dim);
-                self.scroll_to_bottom_view();
             }
         } else {
             let cursor_line = self.buffer().cursor_line();
@@ -1111,7 +1108,6 @@ impl Repl {
                     format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
                     LineStyle::Dim,
                 );
-                self.scroll_to_bottom_view();
             }
         }
         Ok(())
