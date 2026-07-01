@@ -126,6 +126,8 @@ pub struct ToolsConfig {
     pub allow_paths: Vec<String>,
     #[serde(default = "default_cargo_check_cooldown")]
     pub cargo_check_cooldown_secs: u64,
+    #[serde(default)]
+    pub fastpatch: bool,
 }
 
 impl Default for ToolsConfig {
@@ -140,6 +142,7 @@ impl Default for ToolsConfig {
             project_root: String::new(),
             allow_paths: vec!["/tmp".to_string()],
             cargo_check_cooldown_secs: default_cargo_check_cooldown(),
+            fastpatch: false,
         }
     }
 }

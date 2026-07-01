@@ -3,6 +3,7 @@ use std::path::Path;
 mod agent;
 mod config;
 mod debug;
+mod diff;
 mod llm;
 mod patch;
 mod repl;
@@ -11,13 +12,13 @@ mod spinner;
 mod task;
 mod tools;
 use config::AppConfig;
-
 fn print_help() {
     eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
     eprintln!("  pl                       Start REPL with default config");
     eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
+    eprintln!("  pl --fastpatch           Enable fuzzy matching for apply_patch");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
@@ -27,7 +28,7 @@ fn print_help() {
 async fn main() -> Result<()> {
     let mut config_path = None;
     let mut initial_prompt = None;
-
+    let mut fastpatch = false;
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -76,6 +77,9 @@ async fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
+            "--fastpatch" => {
+                fastpatch = true;
+            }
             "--todo" => {
                 if let Some(p) = args.next() {
                     initial_prompt = Some(format!("Do the todo: {}", p));
@@ -89,23 +93,20 @@ async fn main() -> Result<()> {
                 if p.extension().and_then(|e| e.to_str()) == Some("toml") {
                     config_path = Some(p.to_path_buf());
                 } else {
-                    // default to open file for patching
                     initial_prompt = Some(format!(":open {}", arg));
                 }
             }
         }
     }
-
     let mut config = config::load_config(config_path.as_deref())?;
-
-    // Fix: If project_root is not specified in config, default to current working directory
+    if fastpatch {
+        config.tools.fastpatch = true;
+    }
     if config.tools.project_root.is_empty() {
         config.tools.project_root = std::env::current_dir()?.to_string_lossy().to_string();
     }
-
     config::ensure_dirs(&config);
     debug::set_debug(config.debug.enabled);
-
     let client = llm::LLMClient::new(
         &config.server.base_url,
         &config.server.model,
@@ -117,7 +118,6 @@ async fn main() -> Result<()> {
     let bin_path = config.tools.codex_eyes_binary.clone();
     let agent = agent::PatchAgent::new(client, bin_path, config.clone());
     let mut app = repl::Repl::new(agent, config);
-
     match app.run(initial_prompt).await {
         Err(e) if e.to_string() == "__QUIT__" => {}
         Err(e) => eprintln!("Error: {}", e),

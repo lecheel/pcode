@@ -541,7 +541,6 @@ impl PatchAgent {
             let choice = match response["choices"].as_array().and_then(|c| c.first()) {
                 Some(c) => c,
                 None => {
-
                     return format!(
                         "❌ LLM Error: Malformed response (no choices). Response: {}",
                         response

@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-
 fn path_contains_blocked_dir(path: &Path) -> bool {
     path.components().any(|c| {
         if let std::path::Component::Normal(os_str) = c {
@@ -15,7 +14,6 @@ fn path_contains_blocked_dir(path: &Path) -> bool {
         false
     })
 }
-
 fn validate_path(
     path: &str,
     project_root: &Path,
@@ -84,19 +82,16 @@ fn validate_path(
         canonical_root.display()
     ))
 }
-
 fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
     let mut dp = vec![vec![0; b_chars.len() + 1]; a_chars.len() + 1];
-
     for i in 0..=a_chars.len() {
         dp[i][0] = i;
     }
     for j in 0..=b_chars.len() {
         dp[0][j] = j;
     }
-
     for i in 1..=a_chars.len() {
         for j in 1..=b_chars.len() {
             let cost = if a_chars[i - 1] == b_chars[j - 1] {
@@ -109,31 +104,26 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
                 .min(dp[i - 1][j - 1] + cost);
         }
     }
-
     dp[a_chars.len()][b_chars.len()]
 }
-
 pub fn apply_patch(
     path: &str,
     patch_text: &str,
     project_root: &Path,
     allow_paths: &[String],
+    fastpatch: bool,
 ) -> Result<String, String> {
     let resolved = validate_path(path, project_root, allow_paths)?;
-
     if !resolved.exists() {
         return Err(format!("File does not exist: {}", path));
     }
     if resolved.is_dir() {
         return Err(format!("Path is a directory, not a file: {}", path));
     }
-
     let content = std::fs::read_to_string(&resolved)
         .map_err(|e| format!("Failed to read {}: {}", path, e))?;
-
     let mut new_content = content.clone();
     let mut count = 0;
-
     let mut lines = patch_text.lines().peekable();
     while let Some(line) = lines.next() {
         if line.trim() == "<<<<<<< SEARCH" {
@@ -152,7 +142,6 @@ pub fn apply_patch(
                     path
                 ));
             }
-
             let mut replace = Vec::new();
             let mut found_terminator = false;
             while let Some(l) = lines.next() {
@@ -168,30 +157,51 @@ pub fn apply_patch(
                     path
                 ));
             }
-
             let search_str = search.join("\n");
             let replace_str = replace.join("\n");
-
             if search_str.is_empty() {
                 return Err("SEARCH block cannot be empty".to_string());
             }
-
-            // 1. Try exact match first
             if let Some(idx) = new_content.find(&search_str) {
                 new_content.replace_range(idx..idx + search_str.len(), &replace_str);
                 count += 1;
             } else {
-                // 2. Fallback: Normalized line matching (ignoring whitespace)
+                // FASTPATCH INTEGRATION
+                if fastpatch {
+                    let search_lines_v: Vec<String> =
+                        search_str.lines().map(String::from).collect();
+                    let file_lines_v: Vec<String> = new_content.lines().map(String::from).collect();
+                    if !search_lines_v.is_empty() && !file_lines_v.is_empty() {
+                        let match_result =
+                            crate::diff::find_best_match(&search_lines_v, &file_lines_v);
+                        if match_result.score >= 50.0 {
+                            let mut result_lines: Vec<String> =
+                                file_lines_v[..match_result.file_start].to_vec();
+                            result_lines.extend(replace_str.lines().map(String::from));
+                            result_lines.extend(file_lines_v[match_result.file_end..].to_vec());
+                            new_content = result_lines.join("\n");
+                            if content.ends_with('\n') && !new_content.ends_with('\n') {
+                                new_content.push('\n');
+                            }
+                            count += 1;
+                            continue;
+                        } else {
+                            return Err(format!(
+                                "FastPatch failed: match score too low ({:.1}%) in {}.\nExpected:\n{}\n",
+                                match_result.score, path, search_str
+                            ));
+                        }
+                    }
+                }
+
                 let file_lines: Vec<&str> = new_content.lines().collect();
                 let search_lines: Vec<&str> = search_str.lines().collect();
-
                 if search_lines.is_empty() || search_lines.len() > file_lines.len() {
                     return Err(format!(
                         "SEARCH block not found in {}. The search block is larger than the file or empty.",
                         path
                     ));
                 }
-
                 let mut match_indices = Vec::new();
                 for i in 0..=(file_lines.len() - search_lines.len()) {
                     let mut is_match = true;
@@ -205,15 +215,11 @@ pub fn apply_patch(
                         match_indices.push(i);
                     }
                 }
-
                 if match_indices.len() == 1 {
                     let start_line = match_indices[0];
                     let end_line = start_line + search_lines.len();
-
-                    // Calculate indentation difference to fix REPLACE block
                     let actual_first_line = file_lines[start_line];
                     let search_first_line = search_lines[0];
-
                     let actual_indent = actual_first_line
                         .chars()
                         .take_while(|c| *c == ' ' || *c == '\t')
@@ -222,20 +228,15 @@ pub fn apply_patch(
                         .chars()
                         .take_while(|c| *c == ' ' || *c == '\t')
                         .count();
-
-                    // If the file is more indented than the search block, we need to prefix the replace block
                     let indent_prefix = if actual_indent > search_indent {
                         Some(&actual_first_line[..actual_indent - search_indent])
                     } else {
                         None
                     };
-
                     let mut result_lines: Vec<String> = file_lines[..start_line]
                         .iter()
                         .map(|s| s.to_string())
                         .collect();
-
-                    // Apply indentation fix to the replace block
                     for r_line in replace_str.lines() {
                         if let Some(prefix) = indent_prefix {
                             if !r_line.trim().is_empty() {
@@ -247,16 +248,13 @@ pub fn apply_patch(
                             result_lines.push(r_line.to_string());
                         }
                     }
-
                     result_lines.extend(file_lines[end_line..].iter().map(|s| s.to_string()));
-
                     new_content = result_lines.join("\n");
                     if content.ends_with('\n') && !new_content.ends_with('\n') {
                         new_content.push('\n');
                     }
                     count += 1;
                 } else if match_indices.is_empty() {
-                    // Provide closest match context for easier debugging
                     let first_search_line = search_lines.get(0).map(|s| s.trim()).unwrap_or("");
                     let mut closest_line = 0;
                     let mut min_distance = usize::MAX;
@@ -267,7 +265,6 @@ pub fn apply_patch(
                             closest_line = i;
                         }
                     }
-
                     return Err(format!(
                         "SEARCH block not found in {}.\nExpected:\n{}\nMake sure the text matches the code exactly.\nClosest match at line {}: {}",
                         path,
@@ -283,13 +280,10 @@ pub fn apply_patch(
             }
         }
     }
-
     if count == 0 {
         return Err("No valid SEARCH/REPLACE blocks found in patch text".to_string());
     }
-
     std::fs::write(&resolved, &new_content)
         .map_err(|e| format!("Failed to write {}: {}", path, e))?;
-
     Ok(format!("Patched {} ({} block(s) applied)", path, count))
 }
