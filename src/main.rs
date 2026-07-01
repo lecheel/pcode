@@ -20,6 +20,7 @@ fn print_help() {
     eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
     eprintln!("  pl --fastpatch [file]    Apply patches from file locally using fuzzy match");
+    eprintln!("  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
@@ -80,6 +81,40 @@ async fn main() -> Result<()> {
             }
             "--fastpatch" => {
                 fastpatch_target = Some(args.next().unwrap_or_else(|| "todo.md".to_string()));
+            }
+            "--fzf" => {
+                use std::io::Write;
+                use std::process::{Command, Stdio};
+                let choices = "todo.md\ntemp.md\nimpl.md";
+                let mut cmd = Command::new("fzf");
+                cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+                let mut child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("❌ Failed to run fzf: {}. Is it installed?", e);
+                        std::process::exit(1);
+                    }
+                };
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(choices.as_bytes());
+                }
+                let output = match child.wait_with_output() {
+                    Ok(o) => o,
+                    Err(e) => {
+                        eprintln!("❌ fzf failed: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                if !output.status.success() {
+                    eprintln!("Canceled.");
+                    std::process::exit(0);
+                }
+                let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if selected.is_empty() {
+                    eprintln!("Canceled.");
+                    std::process::exit(0);
+                }
+                fastpatch_target = Some(selected);
             }
             "--todo" => {
                 if let Some(p) = args.next() {
