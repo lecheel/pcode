@@ -1,6 +1,17 @@
 // src/patch.rs
 use regex::Regex;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::fs::OpenOptions;
+use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+fn compute_hash<T: Hash>(t: &T) -> String {
+    let mut hasher = DefaultHasher::new();
+    t.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[derive(Debug, Clone)]
 pub struct PatchHunk {
@@ -296,9 +307,40 @@ pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Resu
 
     let mut results = Vec::new();
     let project_root = PathBuf::from(&config.tools.project_root);
+    let impl_dir = project_root.join(".impl");
+    let _ = std::fs::create_dir_all(&impl_dir);
+    let log_path = impl_dir.join("patchinfo.log");
+
+    let mut applied_hashes = HashSet::new();
+    if log_path.exists() {
+        if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+            for line in log_content.lines() {
+                let hash = line.split('|').next().unwrap_or("").trim();
+                if !hash.is_empty() {
+                    applied_hashes.insert(hash.to_string());
+                }
+            }
+        }
+    }
+    let mut newly_applied = Vec::new();
 
     for hunk in hunks {
         if hunk.search.is_empty() {
+            continue;
+        }
+
+        let patch_str = format!(
+            "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
+            hunk.search.join("\n"),
+            hunk.replace.join("\n")
+        );
+        let patch_hash = compute_hash(&patch_str);
+
+        if applied_hashes.contains(&patch_hash) {
+            results.push(format!(
+                "⏭️ {} skipped (already applied in patchinfo.log)",
+                hunk.filename
+            ));
             continue;
         }
 
@@ -322,10 +364,19 @@ pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Resu
 
         let match_result = crate::diff::find_best_match(&hunk.search, &file_lines);
 
-        if match_result.score > 90.0 {
-            let mut new_lines: Vec<String> = file_lines[..match_result.file_start].to_vec();
+        let search_match = crate::diff::find_best_match(&hunk.search, &file_lines);
+        let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines);
+
+        // Prevent duplicate patches: if the replace block is already present, skip
+        if replace_match.score >= 95.0 {
+            results.push(format!("⏭️ {} skipped (already patched)", path));
+            continue;
+        }
+
+        if search_match.score > 90.0 {
+            let mut new_lines: Vec<String> = file_lines[..search_match.file_start].to_vec();
             new_lines.extend(hunk.replace.clone());
-            new_lines.extend(file_lines[match_result.file_end..].to_vec());
+            new_lines.extend(file_lines[search_match.file_end..].to_vec());
 
             let mut new_content = new_lines.join("\n");
             if file_content.ends_with('\n') {
@@ -336,7 +387,7 @@ pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Resu
                 .map_err(|e| format!("Failed to write {}: {}", path, e))?;
 
             let summary = {
-                let mut s = format!("✅ {} patched (Score: {:.1}%)\n", path, match_result.score);
+                let mut s = format!("✅ {} patched (Score: {:.1}%)\n", path, search_match.score);
                 let r_lines = &hunk.replace;
                 if r_lines.len() <= 6 {
                     for l in r_lines {
@@ -353,13 +404,36 @@ pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Resu
                 }
                 s.trim_end().to_string()
             };
+
             results.push(summary);
+
+            // Mark as applied in memory
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            newly_applied.push(format!("{} | {} | {}", patch_hash, path, timestamp));
         } else {
             results.push(format!(
                 "❌ {} skipped (Score: {:.1}%, required > 90.0%)",
-                path, match_result.score
+                path, search_match.score
             ));
         }
+    }
+
+    // Append newly applied patches to patchinfo.log
+    if !newly_applied.is_empty() {
+        let mut log_content = String::new();
+        for entry in &newly_applied {
+            log_content.push_str(entry);
+            log_content.push('\n');
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .and_then(|mut f| f.write_all(log_content.as_bytes()))
+            .map_err(|e| format!("Failed to write patchinfo.log: {}", e))?;
     }
 
     Ok(results.join("\n\n"))
