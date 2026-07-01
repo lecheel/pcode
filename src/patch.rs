@@ -1,4 +1,370 @@
+// src/patch.rs
+use regex::Regex;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct PatchHunk {
+    pub filename: String,
+    pub search: Vec<String>,
+    pub replace: Vec<String>,
+}
+
+pub fn parse_patches(content: &str) -> Vec<PatchHunk> {
+    let trimmed = content.trim();
+    if trimmed.contains("// === SKELETON MODE") || trimmed.contains("//--+ file:///") {
+        return parse_skeleton_patches(content);
+    }
+    if trimmed.contains("<patch>") || trimmed.contains("<<<<<<< SEARCH") {
+        return parse_aider_patches(content);
+    }
+    if trimmed.contains("diff --git") || trimmed.contains("--- ") || trimmed.contains("+++ ") {
+        let hunks = parse_git_or_unified_patches(content);
+        if !hunks.is_empty() {
+            return hunks;
+        }
+    }
+    parse_raw_paste(content)
+}
+
+fn parse_skeleton_patches(content: &str) -> Vec<PatchHunk> {
+    let mut hunks = Vec::new();
+    let mut current_filename = String::new();
+    let mut current_lines: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("//--+ file:///") {
+            if !current_filename.is_empty() {
+                hunks.push(PatchHunk {
+                    filename: current_filename.clone(),
+                    search: current_lines.clone(),
+                    replace: Vec::new(),
+                });
+                current_lines.clear();
+            }
+            if let Some(rest) = line.strip_prefix("//--+ file:///") {
+                let filename = if let Some(bracket_pos) = rest.find('[') {
+                    rest[..bracket_pos].trim()
+                } else {
+                    rest.trim()
+                };
+                current_filename = filename.to_string();
+            }
+        } else if line.trim() == "// === SKELETON MODE (COMPRESSED) ===" {
+            continue;
+        } else if !current_filename.is_empty() {
+            current_lines.push(line.to_string());
+        }
+    }
+    if !current_filename.is_empty() {
+        hunks.push(PatchHunk {
+            filename: current_filename,
+            search: current_lines,
+            replace: Vec::new(),
+        });
+    }
+    hunks
+}
+
+fn parse_aider_patches(content: &str) -> Vec<PatchHunk> {
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<PatchHunk> = None;
+    let mut state = 0;
+    let mut current_filename = String::new();
+    for line in content.lines() {
+        if line.starts_with("<<<<<<< SEARCH") {
+            current_hunk = Some(PatchHunk {
+                filename: current_filename.clone(),
+                search: Vec::new(),
+                replace: Vec::new(),
+            });
+            state = 1;
+        } else if line.starts_with("=======") {
+            state = 2;
+        } else if line.starts_with(">>>>>>> REPLACE") {
+            if let Some(h) = current_hunk.take() {
+                hunks.push(h);
+            }
+            state = 0;
+        } else {
+            if state == 0 {
+                let trimmed = line.trim();
+                let mut found_fn = None;
+                if let Some(start_idx) = trimmed.find('`') {
+                    if let Some(end_idx) = trimmed[start_idx + 1..].find('`') {
+                        let potential = trimmed[start_idx + 1..start_idx + 1 + end_idx].trim();
+                        if !potential.is_empty()
+                            && (potential.contains('/')
+                                || potential.contains('.')
+                                || potential.ends_with(".rs"))
+                        {
+                            found_fn = Some(potential.to_string());
+                        }
+                    }
+                }
+                if found_fn.is_none() {
+                    if let Some(rest) = trimmed.strip_prefix("// ") {
+                        if !rest.is_empty()
+                            && (rest.contains('/') || rest.contains('.') || rest.ends_with(".rs"))
+                        {
+                            found_fn = Some(rest.trim().trim_matches('`').to_string());
+                        }
+                    } else if let Some(rest) = trimmed.strip_prefix("# ") {
+                        if !rest.is_empty()
+                            && (rest.contains('/') || rest.contains('.') || rest.ends_with(".rs"))
+                        {
+                            found_fn = Some(rest.trim().trim_matches('`').to_string());
+                        }
+                    } else if let Some(rest) = trimmed.strip_prefix("filename ") {
+                        found_fn = Some(rest.trim().trim_matches('`').to_string());
+                    } else if let Some(rest) = trimmed.strip_prefix("filename:") {
+                        found_fn = Some(rest.trim().trim_matches('`').to_string());
+                    } else if let Some(rest) = trimmed.strip_prefix("file:") {
+                        found_fn = Some(rest.trim().trim_matches('`').to_string());
+                    } else if let Some(rest) = trimmed.strip_prefix("+++ b/") {
+                        found_fn = Some(rest.trim().trim_matches('`').to_string());
+                    } else if let Some(rest) = trimmed.strip_prefix("+++ ") {
+                        found_fn = Some(rest.trim().trim_matches('`').to_string());
+                    } else if !trimmed.is_empty()
+                        && (trimmed.contains('/')
+                            || trimmed.ends_with(".rs")
+                            || trimmed.ends_with(".toml")
+                            || trimmed.ends_with(".md"))
+                    {
+                        found_fn = Some(trimmed.trim_matches('`').to_string());
+                    }
+                }
+                if let Some(fname) = found_fn {
+                    current_filename = fname;
+                }
+            } else if state == 1 {
+                if let Some(h) = current_hunk.as_mut() {
+                    h.search.push(line.to_string());
+                }
+            } else if state == 2 {
+                if let Some(h) = current_hunk.as_mut() {
+                    h.replace.push(line.to_string());
+                }
+            }
+        }
+    }
+    for h in &mut hunks {
+        while h.search.last().map(|l| l.is_empty()).unwrap_or(false) {
+            h.search.pop();
+        }
+        while h.replace.last().map(|l| l.is_empty()).unwrap_or(false) {
+            h.replace.pop();
+        }
+    }
+    hunks
+}
+
+fn parse_git_or_unified_patches(content: &str) -> Vec<PatchHunk> {
+    let mut hunks = Vec::new();
+    let mut current_hunk: Option<PatchHunk> = None;
+    let mut current_filename = String::new();
+    let mut state = 0;
+    for line in content.lines() {
+        if line.starts_with("diff --git") {
+            if let Some(h) = current_hunk.take() {
+                hunks.push(h);
+            }
+            state = 0;
+        } else if line.starts_with("+++ b/") {
+            current_filename = line.strip_prefix("+++ b/").unwrap().trim().to_string();
+        } else if line.starts_with("+++ ") {
+            current_filename = line.strip_prefix("+++ ").unwrap().trim().to_string();
+        } else if line.starts_with("@@") {
+            if let Some(h) = current_hunk.take() {
+                hunks.push(h);
+            }
+            current_hunk = Some(PatchHunk {
+                filename: current_filename.clone(),
+                search: Vec::new(),
+                replace: Vec::new(),
+            });
+            state = 1;
+        } else if line.starts_with("-") && !line.starts_with("---") {
+            if state == 1 {
+                if let Some(h) = current_hunk.as_mut() {
+                    h.search.push(line[1..].to_string());
+                }
+            }
+        } else if line.starts_with("+") && !line.starts_with("+++") {
+            if state == 1 {
+                if let Some(h) = current_hunk.as_mut() {
+                    h.replace.push(line[1..].to_string());
+                }
+            }
+        } else if line.starts_with(" ") {
+            if state == 1 {
+                if let Some(h) = current_hunk.as_mut() {
+                    h.search.push(line[1..].to_string());
+                    h.replace.push(line[1..].to_string());
+                }
+            }
+        }
+    }
+    if let Some(h) = current_hunk.take() {
+        hunks.push(h);
+    }
+    hunks
+}
+
+fn parse_raw_paste(content: &str) -> Vec<PatchHunk> {
+    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut filename = String::new();
+    let mut search_start = 0;
+    while search_start < lines.len() {
+        let first_line = lines[search_start].trim();
+        if first_line.is_empty() {
+            search_start += 1;
+            continue;
+        }
+        if let Some(rest) = first_line.strip_prefix("// ") {
+            if !rest.is_empty() && (rest.contains('/') || rest.ends_with(".rs")) {
+                filename = rest.trim().to_string();
+                search_start += 1;
+                break;
+            }
+        } else if let Some(rest) = first_line.strip_prefix("# ") {
+            if !rest.is_empty() && (rest.contains('/') || rest.ends_with(".rs")) {
+                filename = rest.trim().to_string();
+                search_start += 1;
+                break;
+            }
+        } else if first_line.starts_with("filename ") {
+            filename = first_line
+                .strip_prefix("filename ")
+                .unwrap()
+                .trim()
+                .to_string();
+            search_start += 1;
+            break;
+        } else if first_line.starts_with("+++ b/") {
+            filename = first_line
+                .strip_prefix("+++ b/")
+                .unwrap()
+                .trim()
+                .to_string();
+            search_start += 1;
+            break;
+        } else if first_line.starts_with("+++ ") {
+            filename = first_line.strip_prefix("+++ ").unwrap().trim().to_string();
+            search_start += 1;
+            break;
+        }
+        break;
+    }
+    let search_lines: Vec<String> = lines[search_start..]
+        .iter()
+        .filter(|l| {
+            !l.starts_with("<<<<<<<") && !l.starts_with("=======") && !l.starts_with(">>>>>>>")
+        })
+        .cloned()
+        .collect();
+    if search_lines.is_empty() && filename.is_empty() {
+        return Vec::new();
+    }
+    vec![PatchHunk {
+        filename,
+        search: search_lines,
+        replace: Vec::new(),
+    }]
+}
+
+pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Result<String, String> {
+    let content = std::fs::read_to_string(todo_path)
+        .map_err(|e| format!("Failed to read {}: {}", todo_path, e))?;
+
+    // Convert markdown style `apply_patch path="..." patch="..."` to standard format
+    let re = Regex::new(r#"path="([^"]+)"\s+patch="([^"]+)""#).unwrap();
+    let mut patched_content = content.clone();
+    for caps in re.captures_iter(&content) {
+        let path = caps.get(1).unwrap().as_str();
+        let patch_text = caps.get(2).unwrap().as_str().replace("\\n", "\n");
+        let replacement = format!("{}\n{}", path, patch_text);
+        patched_content = patched_content.replace(caps.get(0).unwrap().as_str(), &replacement);
+    }
+
+    let hunks = parse_patches(&patched_content);
+    if hunks.is_empty() {
+        return Ok("No patches found.".to_string());
+    }
+
+    let mut results = Vec::new();
+    let project_root = PathBuf::from(&config.tools.project_root);
+
+    for hunk in hunks {
+        if hunk.search.is_empty() {
+            continue;
+        }
+
+        let path = &hunk.filename;
+        let resolved = match validate_path(path, &project_root, &config.tools.allow_paths) {
+            Ok(p) => p,
+            Err(e) => {
+                results.push(format!("❌ {}: {}", path, e));
+                continue;
+            }
+        };
+
+        if !resolved.exists() {
+            results.push(format!("❌ {}: File does not exist", path));
+            continue;
+        }
+
+        let file_content = std::fs::read_to_string(&resolved)
+            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+
+        let match_result = crate::diff::find_best_match(&hunk.search, &file_lines);
+
+        if match_result.score > 90.0 {
+            let mut new_lines: Vec<String> = file_lines[..match_result.file_start].to_vec();
+            new_lines.extend(hunk.replace.clone());
+            new_lines.extend(file_lines[match_result.file_end..].to_vec());
+
+            let mut new_content = new_lines.join("\n");
+            if file_content.ends_with('\n') {
+                new_content.push('\n');
+            }
+
+            std::fs::write(&resolved, &new_content)
+                .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+
+            let summary = {
+                let mut s = format!("✅ {} patched (Score: {:.1}%)\n", path, match_result.score);
+                let r_lines = &hunk.replace;
+                if r_lines.len() <= 6 {
+                    for l in r_lines {
+                        s.push_str(&format!("  {}\n", l));
+                    }
+                } else {
+                    for l in r_lines.iter().take(3) {
+                        s.push_str(&format!("  {}\n", l));
+                    }
+                    s.push_str("  ...\n");
+                    for l in r_lines.iter().skip(r_lines.len() - 3) {
+                        s.push_str(&format!("  {}\n", l));
+                    }
+                }
+                s.trim_end().to_string()
+            };
+            results.push(summary);
+        } else {
+            results.push(format!(
+                "❌ {} skipped (Score: {:.1}%, required > 90.0%)",
+                path, match_result.score
+            ));
+        }
+    }
+
+    Ok(results.join("\n\n"))
+}
+
 fn path_contains_blocked_dir(path: &Path) -> bool {
     path.components().any(|c| {
         if let std::path::Component::Normal(os_str) = c {
@@ -111,7 +477,6 @@ pub fn apply_patch(
     patch_text: &str,
     project_root: &Path,
     allow_paths: &[String],
-    fastpatch: bool,
 ) -> Result<String, String> {
     let resolved = validate_path(path, project_root, allow_paths)?;
     if !resolved.exists() {
@@ -166,34 +531,6 @@ pub fn apply_patch(
                 new_content.replace_range(idx..idx + search_str.len(), &replace_str);
                 count += 1;
             } else {
-                // FASTPATCH INTEGRATION
-                if fastpatch {
-                    let search_lines_v: Vec<String> =
-                        search_str.lines().map(String::from).collect();
-                    let file_lines_v: Vec<String> = new_content.lines().map(String::from).collect();
-                    if !search_lines_v.is_empty() && !file_lines_v.is_empty() {
-                        let match_result =
-                            crate::diff::find_best_match(&search_lines_v, &file_lines_v);
-                        if match_result.score >= 50.0 {
-                            let mut result_lines: Vec<String> =
-                                file_lines_v[..match_result.file_start].to_vec();
-                            result_lines.extend(replace_str.lines().map(String::from));
-                            result_lines.extend(file_lines_v[match_result.file_end..].to_vec());
-                            new_content = result_lines.join("\n");
-                            if content.ends_with('\n') && !new_content.ends_with('\n') {
-                                new_content.push('\n');
-                            }
-                            count += 1;
-                            continue;
-                        } else {
-                            return Err(format!(
-                                "FastPatch failed: match score too low ({:.1}%) in {}.\nExpected:\n{}\n",
-                                match_result.score, path, search_str
-                            ));
-                        }
-                    }
-                }
-
                 let file_lines: Vec<&str> = new_content.lines().collect();
                 let search_lines: Vec<&str> = search_str.lines().collect();
                 if search_lines.is_empty() || search_lines.len() > file_lines.len() {

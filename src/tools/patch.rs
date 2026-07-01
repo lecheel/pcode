@@ -1,3 +1,4 @@
+// src/tools/patch.rs
 use crate::config::AppConfig;
 use crate::patch;
 use crate::tools::common::{err_result, ok_result, ToolResult};
@@ -16,13 +17,7 @@ pub async fn execute_apply_patch(args: &Value, config: &AppConfig) -> ToolResult
         return err_result("Empty patch text");
     }
     let project_root = PathBuf::from(&config.tools.project_root);
-    match patch::apply_patch(
-        path,
-        patch_text,
-        &project_root,
-        &config.tools.allow_paths,
-        config.tools.fastpatch,
-    ) {
+    match patch::apply_patch(path, patch_text, &project_root, &config.tools.allow_paths) {
         Ok(msg) => ok_result(&msg),
         Err(e) => err_result(&e),
     }

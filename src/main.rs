@@ -1,3 +1,4 @@
+// src/main.rs
 use anyhow::Result;
 use std::path::Path;
 mod agent;
@@ -18,7 +19,7 @@ fn print_help() {
     eprintln!("  pl                       Start REPL with default config");
     eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
-    eprintln!("  pl --fastpatch           Enable fuzzy matching for apply_patch");
+    eprintln!("  pl --fastpatch [file]    Apply patches from file locally using fuzzy match");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
@@ -28,7 +29,7 @@ fn print_help() {
 async fn main() -> Result<()> {
     let mut config_path = None;
     let mut initial_prompt = None;
-    let mut fastpatch = false;
+    let mut fastpatch_target = None;
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -78,7 +79,7 @@ async fn main() -> Result<()> {
                 }
             }
             "--fastpatch" => {
-                fastpatch = true;
+                fastpatch_target = Some(args.next().unwrap_or_else(|| "todo.md".to_string()));
             }
             "--todo" => {
                 if let Some(p) = args.next() {
@@ -99,12 +100,24 @@ async fn main() -> Result<()> {
         }
     }
     let mut config = config::load_config(config_path.as_deref())?;
-    if fastpatch {
-        config.tools.fastpatch = true;
-    }
     if config.tools.project_root.is_empty() {
         config.tools.project_root = std::env::current_dir()?.to_string_lossy().to_string();
     }
+
+    if let Some(target) = fastpatch_target {
+        config::ensure_dirs(&config);
+        match patch::run_fastpatch(&target, &config) {
+            Ok(report) => {
+                println!("{}", report);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("❌ FastPatch Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     config::ensure_dirs(&config);
     debug::set_debug(config.debug.enabled);
     let client = llm::LLMClient::new(
