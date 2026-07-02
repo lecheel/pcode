@@ -20,17 +20,46 @@ fn print_help() {
     eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
     eprintln!("  pl --fastpatch [file]    Apply patches from file locally using fuzzy match");
+    eprintln!("  pl --pb                  Apply patches from clipboard locally using fuzzy match");
     eprintln!("  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
     eprintln!("  pl --help                Show this help message");
 }
+
+#[cfg(target_os = "macos")]
+fn read_clipboard() -> Result<String, String> {
+    use std::process::Command;
+    let output = Command::new("pbpaste").output().map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn read_clipboard() -> Result<String, String> {
+    use std::process::Command;
+    let output = Command::new("xclip")
+        .args(["-selection", "clipboard", "-o"])
+        .output()
+        .or_else(|_| {
+            Command::new("xsel")
+                .args(["--clipboard", "--output"])
+                .output()
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn read_clipboard() -> Result<String, String> {
+    Err("Clipboard reading is only supported on macOS and Linux".to_string())
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config_path = None;
     let mut initial_prompt = None;
     let mut fastpatch_target = None;
+    let mut use_clipboard_patch = false;
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -81,6 +110,9 @@ async fn main() -> Result<()> {
             }
             "--fastpatch" => {
                 fastpatch_target = Some(args.next().unwrap_or_else(|| "todo.md".to_string()));
+            }
+            "--pb" => {
+                use_clipboard_patch = true;
             }
             "--fzf" => {
                 use std::io::Write;
@@ -148,6 +180,26 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("❌ FastPatch Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    if use_clipboard_patch {
+        config::ensure_dirs(&config);
+        let content = match read_clipboard() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("❌ Clipboard Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+        match patch::run_clipboard_patch(&content, &config) {
+            Ok(report) => {
+                println!("{}", report);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("❌ Patch Error: {}", e);
                 std::process::exit(1);
             }
         }

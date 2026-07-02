@@ -289,10 +289,12 @@ fn parse_raw_paste(content: &str) -> Vec<PatchHunk> {
 pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Result<String, String> {
     let content = std::fs::read_to_string(todo_path)
         .map_err(|e| format!("Failed to read {}: {}", todo_path, e))?;
+    run_clipboard_patch(&content, config)
+}
 
-    // Convert markdown style `apply_patch path="..." patch="..."` to standard format
+pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> Result<String, String> {
     let re = Regex::new(r#"path="([^"]+)"\s+patch="([^"]+)""#).unwrap();
-    let mut patched_content = content.clone();
+    let mut patched_content = content.to_string();
     for caps in re.captures_iter(&content) {
         let path = caps.get(1).unwrap().as_str();
         let patch_text = caps.get(2).unwrap().as_str().replace("\\n", "\n");
