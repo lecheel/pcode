@@ -364,10 +364,8 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
             .map_err(|e| format!("Failed to read {}: {}", path, e))?;
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
-        let match_result = crate::diff::find_best_match(&hunk.search, &file_lines);
-
-        let search_match = crate::diff::find_best_match(&hunk.search, &file_lines);
-        let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines);
+        let search_match = crate::diff::find_best_match(&hunk.search, &file_lines, true);
+        let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines, true);
 
         // Prevent duplicate patches: if the replace block is already present, skip
         if replace_match.score >= 95.0 {
