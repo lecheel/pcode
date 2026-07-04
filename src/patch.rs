@@ -312,19 +312,20 @@ pub fn run_clipboard_patch(
 
     let project_root = PathBuf::from(&config.tools.project_root);
 
-    // Check if git repo is clean before patching to ensure easy recovery
-    let git_status = std::process::Command::new("git")
-        .args(&["status", "--porcelain"])
-        .current_dir(&project_root)
-        .output()
-        .map_err(|e| format!("Failed to check git status: {}", e))?;
+        // Check if git repo is clean before patching to ensure easy recovery
+        // Using `git diff --quiet HEAD` ignores untracked files (like .impl/)
+        let git_status = std::process::Command::new("git")
+            .args(&["diff", "--quiet", "HEAD"])
+            .current_dir(&project_root)
+            .status()
+            .map_err(|e| format!("Failed to check git status: {}", e))?;
 
-    if git_status.status.success() && !git_status.stdout.is_empty() {
-        return Err(
-                "🚫 Git repo is not clean. Please commit or stash your changes before patching for easy recovery."
+        if !git_status.success() {
+            return Err(
+                "🚫 Git repo has uncommitted changes to tracked files. Please commit or stash before patching for easy recovery."
                     .to_string(),
             );
-    }
+        }
 
     let mut results = Vec::new();
     let project_root = PathBuf::from(&config.tools.project_root);
