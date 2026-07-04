@@ -128,6 +128,8 @@ pub struct ToolsConfig {
     pub cargo_check_cooldown_secs: u64,
     #[serde(default)]
     pub fastpatch: bool,
+    #[serde(default = "default_true")]
+    pub check_git_clean: bool,
 }
 
 impl Default for ToolsConfig {
@@ -143,6 +145,7 @@ impl Default for ToolsConfig {
             allow_paths: vec!["/tmp".to_string()],
             cargo_check_cooldown_secs: default_cargo_check_cooldown(),
             fastpatch: false,
+            check_git_clean: true,
         }
     }
 }
