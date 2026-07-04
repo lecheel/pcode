@@ -314,6 +314,10 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
     let log_path = impl_dir.join("patchinfo.log");
     let last_failed_path = impl_dir.join("last.md");
     let mut failed_hunks: Vec<PatchHunk> = Vec::new();
+    let mut success_count = 0;
+    let mut skipped_count = 0;
+    let mut failed_count = 0;
+    let total_count = hunks.len();
 
     let mut applied_hashes = HashSet::new();
     if log_path.exists() {
@@ -345,6 +349,7 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
                 "⏭️ {} skipped (already applied in patchinfo.log)",
                 hunk.filename
             ));
+            skipped_count += 1;
             continue;
         }
 
@@ -361,6 +366,7 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
         if !resolved.exists() {
             results.push(format!("❌ {}: File does not exist", path));
             failed_hunks.push(hunk.clone());
+            failed_count += 1;
             continue;
         }
 
@@ -372,8 +378,10 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
         let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines, true);
 
         // Prevent duplicate patches: if the replace block is already present, skip
+        // Prevent duplicate patches: if the replace block is already present, skip
         if replace_match.score >= 95.0 {
             results.push(format!("⏭️ {} skipped (already patched)", path));
+            skipped_count += 1;
             continue;
         }
 
@@ -410,6 +418,7 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
             };
 
             results.push(summary);
+            success_count += 1;
 
             // Mark as applied in memory
             let timestamp = std::time::SystemTime::now()
@@ -423,8 +432,21 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
                 path, search_match.score
             ));
             failed_hunks.push(hunk.clone());
+            failed_count += 1;
         }
     }
+
+    // Save failed hunks to .impl/last.md for easy retry
+    // Generate summary line
+    let status = if failed_count == 0 {
+        "100% passed"
+    } else {
+        "completed with errors"
+    };
+    results.push(format!(
+        "📊 Summary: {}/{} patched, {} skipped, {} failed - {}",
+        success_count, total_count, skipped_count, failed_count, status
+    ));
 
     // Save failed hunks to .impl/last.md for easy retry
     if !failed_hunks.is_empty() {
