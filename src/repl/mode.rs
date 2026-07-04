@@ -6,6 +6,7 @@ pub enum Mode {
     Search,
     Visual,
     VisualLine,
+    Merge,
 }
 impl Mode {
     pub fn as_str(&self) -> &'static str {
@@ -16,6 +17,7 @@ impl Mode {
             Mode::Search => "SEARCH",
             Mode::Visual => "VISUAL",
             Mode::VisualLine => "VISUAL LINE",
+            Mode::Merge => "MERGE",
         }
     }
     pub fn status_color(&self) -> crossterm::style::Color {
@@ -26,6 +28,7 @@ impl Mode {
             Mode::Search => crossterm::style::Color::Magenta,
             Mode::Visual => crossterm::style::Color::Blue,
             Mode::VisualLine => crossterm::style::Color::Blue,
+            Mode::Merge => crossterm::style::Color::Magenta,
         }
     }
 }

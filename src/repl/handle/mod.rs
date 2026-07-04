@@ -6,6 +6,7 @@ pub mod event;
 pub mod git;
 pub mod insert;
 pub mod key;
+pub mod merge;
 pub mod normal;
 pub mod popup;
 pub mod search;

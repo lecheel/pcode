@@ -32,6 +32,7 @@ impl Repl {
                 Mode::Command => self.handle_command_key(key, stdout)?,
                 Mode::Search => self.handle_search_key(key, stdout)?,
                 Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
+                Mode::Merge => self.handle_merge_key(key, stdout)?,
             }
             return Ok(());
         }
@@ -277,6 +278,7 @@ impl Repl {
             Mode::Command => self.handle_command_key(key, stdout)?,
             Mode::Search => self.handle_search_key(key, stdout)?,
             Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
+            Mode::Merge => self.handle_merge_key(key, stdout)?,
         }
         Ok(())
     }

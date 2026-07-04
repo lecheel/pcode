@@ -184,27 +184,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-    if use_clipboard_patch {
-        config::ensure_dirs(&config);
-        let content = match read_clipboard() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("❌ Clipboard Error: {}", e);
-                std::process::exit(1);
-            }
-        };
-        match patch::run_clipboard_patch(&content, &config) {
-            Ok(report) => {
-                println!("{}", report);
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("❌ Patch Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-
     config::ensure_dirs(&config);
     debug::set_debug(config.debug.enabled);
     let client = llm::LLMClient::new(
@@ -218,6 +197,23 @@ async fn main() -> Result<()> {
     let bin_path = config.tools.codex_eyes_binary.clone();
     let agent = agent::PatchAgent::new(client, bin_path, config.clone());
     let mut app = repl::Repl::new(agent, config);
+    
+    if use_clipboard_patch {
+        let content = match read_clipboard() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("❌ Clipboard Error: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let hunks = patch::parse_patches(&content);
+        if !hunks.is_empty() {
+            app.start_merge(hunks);
+        } else {
+            eprintln!("❌ No patches found in clipboard.");
+        }
+    }
+
     match app.run(initial_prompt).await {
         Err(e) if e.to_string() == "__QUIT__" => {}
         Err(e) => eprintln!("Error: {}", e),

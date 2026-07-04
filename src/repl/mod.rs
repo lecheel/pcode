@@ -101,6 +101,8 @@ pub struct Repl {
     pub(crate) last_visual_mode: Option<Mode>,
     pub(crate) pending_snippet: Option<String>,
     pub(crate) last_action: Option<RepeatAction>,
+    pub(crate) pending_merge: Option<Vec<crate::patch::PatchHunk>>,
+    pub(crate) merge_index: usize,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -152,6 +154,8 @@ impl Repl {
             last_visual_mode: None,
             pending_snippet: None,
             last_action: None,
+            pending_merge: None,
+            merge_index: 0,
         }
     }
 
@@ -404,6 +408,12 @@ impl Repl {
     // ── rendering ─────────────────────────────────────────────────
 
     pub(crate) fn render(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if self.mode == Mode::Merge {
+            self.render_merge(stdout)?;
+            self.render_spinner_only(stdout)?;
+            stdout.flush()?;
+            return Ok(());
+        }
         let ra_height = self.response_area_height();
         let gutter_w = self.gutter_width();
         let width = self.content_width();
@@ -778,7 +788,7 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine => (" ", &self.editor, 0),
+            Mode::Visual | Mode::VisualLine | Mode::Merge => (" ", &self.editor, 0),
         };
         let input_text = format!("{}{}", prompt, editor.content());
         queue!(
@@ -790,7 +800,7 @@ impl Repl {
             style::ResetColor
         )?;
         match self.mode {
-            Mode::Normal | Mode::Visual | Mode::VisualLine => {
+            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
