@@ -103,6 +103,7 @@ pub struct Repl {
     pub(crate) last_action: Option<RepeatAction>,
     pub(crate) pending_merge: Option<Vec<crate::patch::PatchHunk>>,
     pub(crate) merge_index: usize,
+    pub(crate) merge_scroll: usize,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -156,6 +157,7 @@ impl Repl {
             last_action: None,
             pending_merge: None,
             merge_index: 0,
+            merge_scroll: 0,
         }
     }
 
