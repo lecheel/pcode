@@ -438,15 +438,21 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
 
     // Save failed hunks to .impl/last.md for easy retry
     // Generate summary line
+    // Generate summary line
     let status = if failed_count == 0 {
         "100% passed"
     } else {
         "completed with errors"
     };
-    results.push(format!(
+    let summary_line = format!(
         "📊 Summary: {}/{} patched, {} skipped, {} failed - {}",
         success_count, total_count, skipped_count, failed_count, status
-    ));
+    );
+    if failed_count == 0 {
+        results.push(format!("\x1b[32m{}\x1b[0m", summary_line));
+    } else {
+        results.push(format!("\x1b[31m{}\x1b[0m", summary_line));
+    }
 
     // Save failed hunks to .impl/last.md for easy retry
     if !failed_hunks.is_empty() {
