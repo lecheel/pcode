@@ -312,6 +312,8 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
     let impl_dir = project_root.join(".impl");
     let _ = std::fs::create_dir_all(&impl_dir);
     let log_path = impl_dir.join("patchinfo.log");
+    let last_failed_path = impl_dir.join("last.md");
+    let mut failed_hunks: Vec<PatchHunk> = Vec::new();
 
     let mut applied_hashes = HashSet::new();
     if log_path.exists() {
@@ -351,12 +353,14 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
             Ok(p) => p,
             Err(e) => {
                 results.push(format!("❌ {}: {}", path, e));
+                failed_hunks.push(hunk.clone());
                 continue;
             }
         };
 
         if !resolved.exists() {
             results.push(format!("❌ {}: File does not exist", path));
+            failed_hunks.push(hunk.clone());
             continue;
         }
 
@@ -418,8 +422,33 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
                 "❌ {} skipped (Score: {:.1}%, required > 90.0%)",
                 path, search_match.score
             ));
+            failed_hunks.push(hunk.clone());
         }
     }
+
+    // Save failed hunks to .impl/last.md for easy retry
+    if !failed_hunks.is_empty() {
+        let mut md_content = String::new();
+        for h in &failed_hunks {
+            md_content.push_str(&format!("// {}\n", h.filename));
+            md_content.push_str("<<<<<<< SEARCH\n");
+            md_content.push_str(&h.search.join("\n"));
+            md_content.push_str("\n=======\n");
+            md_content.push_str(&h.replace.join("\n"));
+            md_content.push_str("\n>>>>>>> REPLACE\n\n");
+        }
+        std::fs::write(&last_failed_path, md_content)
+            .map_err(|e| format!("Failed to write last.md: {}", e))?;
+        results.push(format!(
+            "📝 Saved {} failed patch(es) to .impl/last.md",
+            failed_hunks.len()
+        ));
+    } else if last_failed_path.exists() {
+        // Clear the file if all patches succeed this time
+        let _ = std::fs::remove_file(&last_failed_path);
+    }
+
+    // Append newly applied patches to patchinfo.log
 
     // Append newly applied patches to patchinfo.log
     if !newly_applied.is_empty() {
