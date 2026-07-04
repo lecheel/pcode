@@ -292,7 +292,10 @@ pub fn run_fastpatch(todo_path: &str, config: &crate::config::AppConfig) -> Resu
     run_clipboard_patch(&content, config)
 }
 
-pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> Result<String, String> {
+pub fn run_clipboard_patch(
+    content: &str,
+    config: &crate::config::AppConfig,
+) -> Result<String, String> {
     let re = Regex::new(r#"path="([^"]+)"\s+patch="([^"]+)""#).unwrap();
     let mut patched_content = content.to_string();
     for caps in re.captures_iter(&content) {
@@ -305,6 +308,22 @@ pub fn run_clipboard_patch(content: &str, config: &crate::config::AppConfig) -> 
     let hunks = parse_patches(&patched_content);
     if hunks.is_empty() {
         return Ok("No patches found.".to_string());
+    }
+
+    let project_root = PathBuf::from(&config.tools.project_root);
+
+    // Check if git repo is clean before patching to ensure easy recovery
+    let git_status = std::process::Command::new("git")
+        .args(&["status", "--porcelain"])
+        .current_dir(&project_root)
+        .output()
+        .map_err(|e| format!("Failed to check git status: {}", e))?;
+
+    if git_status.status.success() && !git_status.stdout.is_empty() {
+        return Err(
+                "🚫 Git repo is not clean. Please commit or stash your changes before patching for easy recovery."
+                    .to_string(),
+            );
     }
 
     let mut results = Vec::new();
