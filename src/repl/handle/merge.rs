@@ -9,9 +9,28 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use similar::{ChangeTag, TextDiff};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+thread_local! {
+    static MERGE_UNDO_STACK: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+fn push_undo(filename: &str, content: &str) {
+    MERGE_UNDO_STACK.with(|s| {
+        s.borrow_mut()
+            .entry(filename.to_string())
+            .or_default()
+            .push(content.to_string());
+    });
+}
+
+fn pop_undo(filename: &str) -> Option<String> {
+    MERGE_UNDO_STACK.with(|s| s.borrow_mut().get_mut(filename).and_then(|v| v.pop()))
+}
 
 #[derive(Clone)]
 pub(crate) enum DiffRow {
@@ -181,6 +200,11 @@ impl Repl {
         if hunks.is_empty() {
             return;
         }
+        for h in &hunks {
+            MERGE_UNDO_STACK.with(|s| {
+                s.borrow_mut().remove(&h.filename);
+            });
+        }
         // Remove this line - merge_rows is not used
         // self.merge_rows = build_diff_rows(&hunks[0].search, &hunks[0].replace);
         self.pending_merge = Some(hunks);
@@ -271,6 +295,12 @@ impl Repl {
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+
+                let file_path = project_root.join(&hunk.filename);
+                if let Ok(file_content) = std::fs::read_to_string(&file_path) {
+                    push_undo(&hunk.filename, &file_content);
+                }
+
                 let patch_text = format!(
                     "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
                     hunk.search.join("\n"),
@@ -443,9 +473,8 @@ impl Repl {
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
                 let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
-                
-                let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
-                std::fs::write(&undo_file, &file_content)?;
+
+                push_undo(&hunk.filename, &file_content);
 
                 let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
@@ -461,7 +490,7 @@ impl Repl {
                 }
                 self.merge_cursor = line_idx;
             }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::ALT) => {
+            KeyCode::Char('d') => {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
@@ -470,8 +499,7 @@ impl Repl {
                 let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
                 if !file_lines.is_empty() {
-                    let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
-                    std::fs::write(&undo_file, &file_content)?;
+                    push_undo(&hunk.filename, &file_content);
 
                     let line_idx = self.merge_cursor.min(file_lines.len() - 1);
                     file_lines.remove(line_idx);
@@ -483,8 +511,8 @@ impl Repl {
                     } else if self.merge_match_end > line_idx {
                         self.merge_match_end = self.merge_match_end.saturating_sub(1);
                     }
-                    if self.merge_cursor > 0 {
-                        self.merge_cursor -= 1;
+                    if self.merge_cursor >= file_lines.len() {
+                        self.merge_cursor = file_lines.len().saturating_sub(1);
                     }
                     self.push_info("  🗑️ Line deleted.", LineStyle::Info);
                 }
@@ -493,14 +521,13 @@ impl Repl {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
-                let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
-                
-                if undo_file.exists() {
-                    if let Ok(undo_content) = std::fs::read_to_string(&undo_file) {
-                        std::fs::write(&file_path, &undo_content)?;
-                        std::fs::remove_file(&undo_file)?;
-                        self.push_info("  ↩️ Undo successful.", LineStyle::Info);
-                    }
+
+                if let Some(undo_content) = pop_undo(&hunk.filename) {
+                    std::fs::write(&file_path, &undo_content)?;
+                    self.push_info("  ↩️ Undo successful.", LineStyle::Info);
+                    let old_cursor = self.merge_cursor;
+                    self.calc_merge_file_scroll();
+                    self.merge_cursor = old_cursor;
                 } else {
                     self.push_info("  Nothing to undo.", LineStyle::Error);
                 }
@@ -515,10 +542,6 @@ impl Repl {
         self.render(stdout)?;
         Ok(())
     }
-
-
-
-
 
     fn next_merge(&mut self) {
         if self.merge_index + 1 < self.pending_merge.as_ref().unwrap().len() {
@@ -540,7 +563,7 @@ impl Repl {
     pub(crate) fn render_merge(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
         let term_width = self.term_width();
-        let split_x = (term_width * 7) / 10; // 7:3 ratio (file left, patch right)
+        let split_x = (term_width * 6) / 10; // 6:4 ratio (file left, patch right)
 
         let hunks = match &self.pending_merge {
             Some(h) => h,
