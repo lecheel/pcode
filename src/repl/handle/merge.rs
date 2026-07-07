@@ -130,7 +130,7 @@ impl Repl {
         let idx = self.llm_buffer_idx();
         self.active_buffer = idx;
         self.push_info(
-            "  🔀 Entering Merge Mode. [a]pply [r]eject [n]ext/[p]rev hunk []/[ jump change [q]uit",
+            "  🔀 Entering Merge Mode. [a]pply [r]eject [n]ext/[p]rev hunk  j/k cursor  J/K anchor  ma/mA set  [q]uit",
             LineStyle::Info,
         );
     }
@@ -145,8 +145,9 @@ impl Repl {
         // Use diff::find_best_match to accurately locate the anchor
         let match_result = crate::diff::find_best_match(&hunk.search, &file_lines, true);
         self.merge_match_idx = match_result.file_start;
+        self.merge_match_end = match_result.file_start + hunk.search.len().max(1);
+        self.merge_cursor = match_result.file_start;
         self.merge_file_scroll = match_result.file_start.saturating_sub(2);
-        self.merge_anchor_offset = 0;
     }
 
     pub(super) fn handle_merge_key(
@@ -158,7 +159,26 @@ impl Repl {
             self.mode = Mode::Insert;
             return Ok(());
         }
-
+        if self.pending == Some('m') {
+            self.pending = None;
+            match key.code {
+                KeyCode::Char('a') => {
+                    self.merge_match_idx = self.merge_cursor;
+                    if self.merge_match_end <= self.merge_match_idx {
+                        self.merge_match_end = self.merge_match_idx + 1;
+                    }
+                }
+                KeyCode::Char('A') => {
+                    self.merge_match_end = self.merge_cursor + 1;
+                    if self.merge_match_idx >= self.merge_match_end {
+                        self.merge_match_idx = self.merge_match_end.saturating_sub(1);
+                    }
+                }
+                _ => {}
+            }
+            self.render(stdout)?;
+            return Ok(());
+        }
         match key.code {
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
@@ -197,49 +217,58 @@ impl Repl {
                     self.calc_merge_file_scroll();
                 }
             }
+            KeyCode::Char('m') => {
+                self.pending = Some('m');
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.merge_left_active {
-                    self.merge_anchor_offset += 1;
+                    self.merge_cursor += 1;
                 } else {
                     self.merge_scroll += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 if self.merge_left_active {
-                    self.merge_anchor_offset -= 1;
+                    self.merge_cursor = self.merge_cursor.saturating_sub(1);
                 } else {
                     self.merge_scroll = self.merge_scroll.saturating_sub(1);
                 }
             }
-            KeyCode::Char('J') | KeyCode::PageDown => {
+            KeyCode::Char('J') => {
+                if self.merge_left_active {
+                    self.merge_match_end += 1;
+                } else {
+                    let vis = self.response_area_height().saturating_sub(2);
+                    self.merge_scroll += vis;
+                }
+            }
+            KeyCode::Char('K') => {
+                if self.merge_left_active {
+                    if self.merge_match_end > self.merge_match_idx + 1 {
+                        self.merge_match_end -= 1;
+                    }
+                } else {
+                    let vis = self.response_area_height().saturating_sub(2);
+                    self.merge_scroll = self.merge_scroll.saturating_sub(vis);
+                }
+            }
+            KeyCode::PageDown => {
                 let vis = self.response_area_height().saturating_sub(2);
                 if self.merge_left_active {
                     self.merge_file_scroll += vis;
+                    self.merge_cursor += vis;
                 } else {
                     self.merge_scroll += vis;
                 }
             }
-            KeyCode::Char('K') | KeyCode::PageUp => {
+            KeyCode::PageUp => {
                 let vis = self.response_area_height().saturating_sub(2);
                 if self.merge_left_active {
                     self.merge_file_scroll = self.merge_file_scroll.saturating_sub(vis);
+                    self.merge_cursor = self.merge_cursor.saturating_sub(vis);
                 } else {
                     self.merge_scroll = self.merge_scroll.saturating_sub(vis);
                 }
-            }
-            KeyCode::Char('<') => {
-                self.merge_anchor_offset -= 1;
-            }
-            KeyCode::Char('>') => {
-                self.merge_anchor_offset += 1;
-            }
-            KeyCode::PageDown => {
-                let vis = self.response_area_height().saturating_sub(2);
-                self.merge_scroll += vis;
-            }
-            KeyCode::PageUp => {
-                let vis = self.response_area_height().saturating_sub(2);
-                self.merge_scroll = self.merge_scroll.saturating_sub(vis);
             }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.pending_merge = None;
@@ -348,7 +377,7 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]nav ",
+                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]cursor [J/K]anchor [ma/mA]set ",
                 self.merge_index + 1,
                 hunks.len()
             )),
@@ -408,8 +437,15 @@ impl Repl {
         let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
-        let actual_match_idx = (self.merge_match_idx as i32 + self.merge_anchor_offset).max(0) as usize;
-        let matched_end = actual_match_idx + hunk.search.len();
+        if self.merge_match_end <= self.merge_match_idx {
+            self.merge_match_end = self.merge_match_idx + 1;
+        }
+        if !file_lines.is_empty() && self.merge_cursor >= file_lines.len() {
+            self.merge_cursor = file_lines.len() - 1;
+        }
+        let actual_match_idx = self.merge_match_idx;
+        let matched_end = self.merge_match_end.min(file_lines.len());
+        let cursor_line = self.merge_cursor;
 
         // ── calculate scroll limits ────────────────────────────
         let start_y = 2;
@@ -425,10 +461,11 @@ impl Repl {
         }
 
         // Auto-scroll left panel if the anchor (cursor) moves out of view
-        if actual_match_idx < self.merge_file_scroll {
-            self.merge_file_scroll = actual_match_idx.saturating_sub(2);
-        } else if actual_match_idx >= self.merge_file_scroll + visible_height {
-            self.merge_file_scroll = actual_match_idx + 1 - visible_height;
+        // Auto-scroll left panel if the cursor moves out of view
+        if cursor_line < self.merge_file_scroll {
+            self.merge_file_scroll = cursor_line.saturating_sub(2);
+        } else if cursor_line >= self.merge_file_scroll + visible_height {
+            self.merge_file_scroll = cursor_line + 1 - visible_height;
         }
         if self.merge_file_scroll > max_file_scroll {
             self.merge_file_scroll = max_file_scroll;
@@ -445,14 +482,17 @@ impl Repl {
             if f_idx < file_lines.len() {
                 let line = &file_lines[f_idx];
                 let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
+                let is_cursor = f_idx == cursor_line;
                 
                 let line_num = f_idx + 1;
-                let line_num_str = format!("{:>4} ", line_num);
-
+                let cursor_mark = if is_cursor { ">" } else { " " };
+                let line_num_str = format!("{:>4}{}", line_num, cursor_mark);
                 let disp = trunc(line, left_panel_content_w);
                 let pad = left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
                 
-                let (fg, bg) = if is_in_match {
+                let (fg, bg) = if is_cursor {
+                    (Color::Black, Color::Cyan)
+                } else if is_in_match {
                     (Color::Black, Color::Yellow)
                 } else {
                     (Color::White, Color::Black)

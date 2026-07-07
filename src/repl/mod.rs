@@ -106,7 +106,8 @@ pub struct Repl {
     pub(crate) merge_scroll: usize,
     pub(crate) merge_file_scroll: usize,
     pub(crate) merge_match_idx: usize,
-    pub(crate) merge_anchor_offset: i32,
+    pub(crate) merge_match_end: usize,
+    pub(crate) merge_cursor: usize,
     pub(crate) merge_left_active: bool,
 }
 
@@ -164,7 +165,8 @@ impl Repl {
             merge_scroll: 0,
             merge_file_scroll: 0,
             merge_match_idx: 0,
-            merge_anchor_offset: 0,
+            merge_match_end: 0,
+            merge_cursor: 0,
             merge_left_active: true,
         }
     }
