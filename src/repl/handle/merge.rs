@@ -83,7 +83,10 @@ pub(crate) fn build_diff_rows(search: &[String], replace: &[String]) -> Vec<Diff
 /// block in the file) and returns a per-`matched`-line gutter char:
 /// '=' equal, '~' modified, '+' extra line only in file, plus equal/total counts
 /// used to compute a match percentage.
-pub(crate) fn build_match_gutter(search: &[String], matched: &[String]) -> (Vec<char>, usize, usize) {
+pub(crate) fn build_match_gutter(
+    search: &[String],
+    matched: &[String],
+) -> (Vec<char>, usize, usize) {
     let rows = build_diff_rows(search, matched);
     let mut gutter = Vec::with_capacity(matched.len());
     let mut equal_count = 0usize;
@@ -250,7 +253,7 @@ impl Repl {
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         self.push_info(
-            "  🔀 Entering Merge Mode. [a]pply [r]eject [R]ecalc  ma/mA set  [q]uit",
+            "  🔀 Entering Merge Mode. [a]pply [r]ecalc  ma/mA set  [q]uit",
             LineStyle::Info,
         );
     }
@@ -259,11 +262,17 @@ impl Repl {
         let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
-        let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
-            self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
-        } else {
-            std::fs::read_to_string(&file_path).unwrap_or_default()
-        };
+        let file_content =
+            if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                self.buffers[idx]
+                    .lines()
+                    .iter()
+                    .map(|l| l.content().clone())
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            } else {
+                std::fs::read_to_string(&file_path).unwrap_or_default()
+            };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
         let search = &hunk.search;
@@ -331,9 +340,15 @@ impl Repl {
             KeyCode::F(9) => {
                 self.merge_buffer_apply = !self.merge_buffer_apply;
                 if self.merge_buffer_apply {
-                    self.push_info("  🔀 Buffer Mode ON. [a] will apply to buffer (Alt-w to save).", LineStyle::Info);
+                    self.push_info(
+                        "  🔀 Buffer Mode ON. [a] will apply to buffer (Alt-w to save).",
+                        LineStyle::Info,
+                    );
                 } else {
-                    self.push_info("  🔀 Buffer Mode OFF. [a] will apply to file.", LineStyle::Info);
+                    self.push_info(
+                        "  🔀 Buffer Mode OFF. [a] will apply to file.",
+                        LineStyle::Info,
+                    );
                 }
             }
             KeyCode::Char('a') | KeyCode::Char('A') => {
@@ -343,25 +358,39 @@ impl Repl {
 
                 if self.merge_buffer_apply {
                     let temp_path = file_path.with_extension("codex_eyes_mergetmp");
-                    let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
-                        self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
+                    let file_content = if let Some(idx) =
+                        self.buffers.iter().position(|b| b.name() == hunk.filename)
+                    {
+                        self.buffers[idx]
+                            .lines()
+                            .iter()
+                            .map(|l| l.content().clone())
+                            .collect::<Vec<String>>()
+                            .join("\n")
                     } else {
                         std::fs::read_to_string(&file_path).unwrap_or_default()
                     };
                     push_undo(&hunk.filename, &file_content);
                     self.merge_last_modified = Some((hunk.filename.clone(), true));
                     let _ = std::fs::write(&temp_path, &file_content);
-                    
+
                     let temp_filename = temp_path.to_string_lossy().to_string();
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
                         hunk.search.join("\n"),
                         hunk.replace.join("\n")
                     );
-                    match crate::patch::apply_patch(&temp_filename, &patch_text, &project_root, &self.config.tools.allow_paths) {
+                    match crate::patch::apply_patch(
+                        &temp_filename,
+                        &patch_text,
+                        &project_root,
+                        &self.config.tools.allow_paths,
+                    ) {
                         Ok(_) => {
                             if let Ok(modified_content) = std::fs::read_to_string(&temp_path) {
-                                let buf_idx = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                                let buf_idx = if let Some(idx) =
+                                    self.buffers.iter().position(|b| b.name() == hunk.filename)
+                                {
                                     idx
                                 } else {
                                     let idx = self.buffers.len();
@@ -372,12 +401,18 @@ impl Repl {
                                 self.buffers[buf_idx].clear();
                                 self.buffers[buf_idx].push_str(&modified_content, LineStyle::Plain);
                                 self.modified_buffers.insert(hunk.filename.clone());
-                                self.push_info("  ✅ Applied to buffer. Press Alt-w to save.", LineStyle::ToolResult);
+                                self.push_info(
+                                    "  ✅ Applied to buffer. Press Alt-w to save.",
+                                    LineStyle::ToolResult,
+                                );
                                 self.next_merge();
                             }
                         }
                         Err(e) => {
-                            self.push_info(format!("  ❌ Merge to buffer failed: {}", e), LineStyle::Error);
+                            self.push_info(
+                                format!("  ❌ Merge to buffer failed: {}", e),
+                                LineStyle::Error,
+                            );
                         }
                     }
                     let _ = std::fs::remove_file(&temp_path);
@@ -398,16 +433,14 @@ impl Repl {
                         &self.config.tools.allow_paths,
                     ) {
                         Ok(msg) => self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult),
-                        Err(e) => self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error),
+                        Err(e) => {
+                            self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error)
+                        }
                     }
                     self.next_merge();
                 }
             }
             KeyCode::Char('r') => {
-                self.push_info("  🚫 Rejected hunk.", LineStyle::Error);
-                self.next_merge();
-            }
-            KeyCode::Char('R') => {
                 self.calc_merge_file_scroll();
                 self.push_info(
                     "  🔄 Recalculated best-match block from scratch.",
@@ -635,8 +668,9 @@ impl Repl {
                 }
             }
             KeyCode::Char('u') => {
-                let hunk_filename =
-                    self.pending_merge.as_ref().unwrap()[self.merge_index].filename.clone();
+                let hunk_filename = self.pending_merge.as_ref().unwrap()[self.merge_index]
+                    .filename
+                    .clone();
                 let (target_file, was_buffer) = self
                     .merge_last_modified
                     .clone()
@@ -658,10 +692,16 @@ impl Repl {
                             format!("  ↩️ Undo successful for {} (buffer).", target_file),
                             LineStyle::Info,
                         );
-                        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                        let project_root =
+                            std::path::PathBuf::from(&self.config.tools.project_root);
                         let file_path = project_root.join(&target_file);
                         let disk_content = std::fs::read_to_string(&file_path).unwrap_or_default();
-                        let buf_content = self.buffers[buf_idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n");
+                        let buf_content = self.buffers[buf_idx]
+                            .lines()
+                            .iter()
+                            .map(|l| l.content().clone())
+                            .collect::<Vec<String>>()
+                            .join("\n");
                         if buf_content == disk_content {
                             self.modified_buffers.remove(&target_file);
                         }
@@ -674,8 +714,14 @@ impl Repl {
                             format!("  ↩️ Undo successful for {} (disk).", target_file),
                             LineStyle::Info,
                         );
-                        if let Some(idx) = self.buffers.iter().position(|b| b.name() == target_file) {
-                            let buf_content = self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n");
+                        if let Some(idx) = self.buffers.iter().position(|b| b.name() == target_file)
+                        {
+                            let buf_content = self.buffers[idx]
+                                .lines()
+                                .iter()
+                                .map(|l| l.content().clone())
+                                .collect::<Vec<String>>()
+                                .join("\n");
                             if buf_content == undo_content {
                                 self.modified_buffers.remove(&target_file);
                             }
@@ -818,11 +864,17 @@ impl Repl {
         let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk);
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
-        let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
-            self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
-        } else {
-            std::fs::read_to_string(&file_path).unwrap_or_default()
-        };
+        let file_content =
+            if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                self.buffers[idx]
+                    .lines()
+                    .iter()
+                    .map(|l| l.content().clone())
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            } else {
+                std::fs::read_to_string(&file_path).unwrap_or_default()
+            };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
         if self.merge_match_end <= self.merge_match_idx {
@@ -848,28 +900,27 @@ impl Repl {
             100
         };
         let match_label = if equal_count == 0 {
-            "match:none (ghost anchor — R recalc, ma/mA set)".to_string()
+            "match:none (ghost anchor — r recalc, ma/mA set)".to_string()
         } else {
             format!("match:{}%", match_percent)
         };
         // ── status row ─────────────────────────────────────────
+        let hint_y = self.height.saturating_sub(3) as u16;
         queue!(
             stdout,
-            cursor::MoveTo(0, 1),
+            cursor::MoveTo(0, hint_y),
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] {}  [a]pply [r]eject [R]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}] {}  [a]pply [r]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len(),
                 match_label
             )),
             style::ResetColor
         )?;
-
-        // ── calculate scroll limits ────────────────────────────
-        let start_y = 2;
-        let visible_height = ra_height.saturating_sub(start_y);
+        let start_y = 1;
+        let visible_height = hint_y as usize - start_y;
         let max_scroll = right_rows.len().saturating_sub(visible_height);
         if self.merge_scroll > max_scroll {
             self.merge_scroll = max_scroll;
