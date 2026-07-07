@@ -874,86 +874,26 @@ impl Repl {
             "glog" => {
                 let output = std::process::Command::new("git")
                     .arg("log")
-                    .arg("--graph")
-                    .arg("--oneline")
+                    .arg("--pretty=format:%H %s")
                     .arg("--all")
                     .output();
-
-                let new_buf_idx = if self.buffer().name() == "GitLog" {
-                    self.active_buffer
-                } else {
-                    let idx = self.buffers.len();
-                    self.buffers.push(ResponseBuffer::with_name("GitLog"));
-                    idx
-                };
-                self.active_buffer = new_buf_idx;
-                self.buffers[new_buf_idx].clear();
-
-                let c_idx = self.console_buffer_idx();
-                self.buffers[c_idx].push(BufferLine::new("  🌳 GitLog", LineStyle::Info));
-
-                if let Ok(out) = output {
-                    let s = String::from_utf8_lossy(&out.stdout);
-                    for line in s.lines() {
-                        let mut segments = Vec::new();
-
-                        let mut graph_end = line.len();
-                        for (i, c) in line.char_indices() {
-                            if c.is_alphanumeric() {
-                                graph_end = i;
-                                break;
-                            }
+                match output {
+                    Ok(out) => {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        self.glog_commits = s.lines().map(String::from).collect();
+                        if self.glog_commits.is_empty() {
+                            self.push_command_info("  No commits found", LineStyle::Dim);
+                        } else {
+                            self.glog_left_cursor = 0;
+                            self.glog_right_scroll = 0;
+                            self.glog_left_active = true;
+                            self.mode = Mode::GitLog;
                         }
-
-                        if graph_end > 0 {
-                            segments.push((line[..graph_end].to_string(), LineStyle::Dim));
-                        }
-
-                        let rest = &line[graph_end..];
-                        if let Some(space_idx) = rest.find(' ') {
-                            let hash = &rest[..space_idx];
-                            if !hash.is_empty() {
-                                segments.push((hash.to_string(), LineStyle::User));
-                            }
-
-                            let msg = &rest[space_idx..];
-                            if let Some(start) = msg.find('(') {
-                                if let Some(end) = msg.find(')') {
-                                    if start > 0 {
-                                        segments.push((msg[..start].to_string(), LineStyle::Plain));
-                                    }
-                                    segments.push((
-                                        msg[start..=end].to_string(),
-                                        LineStyle::ToolResult,
-                                    ));
-                                    if end + 1 < msg.len() {
-                                        segments
-                                            .push((msg[end + 1..].to_string(), LineStyle::Plain));
-                                    }
-                                } else {
-                                    segments.push((msg.to_string(), LineStyle::Plain));
-                                }
-                            } else {
-                                segments.push((msg.to_string(), LineStyle::Plain));
-                            }
-                        } else if !rest.is_empty() {
-                            segments.push((rest.to_string(), LineStyle::User));
-                        }
-
-                        if segments.is_empty() {
-                            segments.push((String::new(), LineStyle::Plain));
-                        }
-
-                        self.buffers[new_buf_idx].push(BufferLine::from_segments(segments));
                     }
-                } else {
-                    self.buffers[new_buf_idx]
-                        .push(BufferLine::new("  Failed to run git log", LineStyle::Error));
+                    Err(_) => {
+                        self.push_command_info("  ❌ Failed to run git log", LineStyle::Error)
+                    }
                 }
-
-                self.buffer_mut().move_top();
-                self.ensure_cursor_visible();
-                return Ok(CommandResult::Continue);
             }
             "gs" => {
                 self.show_git_status(stdout, None)?;

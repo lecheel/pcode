@@ -33,6 +33,7 @@ impl Repl {
                 Mode::Search => self.handle_search_key(key, stdout)?,
                 Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
                 Mode::Merge => self.handle_merge_key(key, stdout)?,
+                Mode::GitLog => self.handle_glog_key(key, stdout)?,
             }
             return Ok(());
         }
@@ -340,7 +341,65 @@ impl Repl {
             Mode::Search => self.handle_search_key(key, stdout)?,
             Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
             Mode::Merge => self.handle_merge_key(key, stdout)?,
+            Mode::GitLog => self.handle_glog_key(key, stdout)?,
         }
+        Ok(())
+    }
+
+    pub(super) fn handle_glog_key(
+        &mut self,
+        key: KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<()> {
+        match key.code {
+            KeyCode::Tab => {
+                self.glog_left_active = !self.glog_left_active;
+            }
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.glog_left_active {
+                    if self.glog_left_cursor < self.glog_commits.len().saturating_sub(1) {
+                        self.glog_left_cursor += 1;
+                        self.glog_right_scroll = 0;
+                    }
+                } else {
+                    self.glog_right_scroll += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.glog_left_active {
+                    if self.glog_left_cursor > 0 {
+                        self.glog_left_cursor -= 1;
+                        self.glog_right_scroll = 0;
+                    }
+                } else {
+                    self.glog_right_scroll = self.glog_right_scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::PageDown => {
+                let vis = self.response_area_height().saturating_sub(2);
+                if self.glog_left_active {
+                    self.glog_left_cursor = (self.glog_left_cursor + vis)
+                        .min(self.glog_commits.len().saturating_sub(1));
+                    self.glog_right_scroll = 0;
+                } else {
+                    self.glog_right_scroll += vis;
+                }
+            }
+            KeyCode::PageUp => {
+                let vis = self.response_area_height().saturating_sub(2);
+                if self.glog_left_active {
+                    self.glog_left_cursor = self.glog_left_cursor.saturating_sub(vis);
+                    self.glog_right_scroll = 0;
+                } else {
+                    self.glog_right_scroll = self.glog_right_scroll.saturating_sub(vis);
+                }
+            }
+            _ => {}
+        }
+        self.render(stdout)?;
         Ok(())
     }
 }

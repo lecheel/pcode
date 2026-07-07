@@ -114,6 +114,10 @@ pub struct Repl {
     pub(crate) modified_buffers: std::collections::HashSet<String>,
     pub(crate) merge_buffer_apply: bool,
     pub(crate) merge_last_modified: Option<(String, bool)>,
+    pub(crate) glog_left_active: bool,
+    pub(crate) glog_commits: Vec<String>,
+    pub(crate) glog_left_cursor: usize,
+    pub(crate) glog_right_scroll: usize,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -178,6 +182,10 @@ impl Repl {
             modified_buffers: std::collections::HashSet::new(),
             merge_buffer_apply: false,
             merge_last_modified: None,
+            glog_left_active: true,
+            glog_commits: Vec::new(),
+            glog_left_cursor: 0,
+            glog_right_scroll: 0,
         }
     }
 
@@ -430,6 +438,12 @@ impl Repl {
     pub(crate) fn render(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         if self.mode == Mode::Merge {
             self.render_merge(stdout)?;
+            self.render_spinner_only(stdout)?;
+            stdout.flush()?;
+            return Ok(());
+        }
+        if self.mode == Mode::GitLog {
+            self.render_glog(stdout)?;
             self.render_spinner_only(stdout)?;
             stdout.flush()?;
             return Ok(());
@@ -820,7 +834,7 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine | Mode::Merge => (" ", &self.editor, 0),
+            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog => (" ", &self.editor, 0),
         };
         let input_text = format!("{}{}", prompt, editor.content());
         queue!(
@@ -832,7 +846,7 @@ impl Repl {
             style::ResetColor
         )?;
         match self.mode {
-            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge => {
+            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
@@ -926,6 +940,217 @@ impl Repl {
         }
 
         stdout.flush()?;
+        Ok(())
+    }
+    pub(crate) fn render_glog(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let ra_height = self.response_area_height();
+        let term_width = self.term_width();
+        let split_ratio = if self.glog_left_active { 6 } else { 4 };
+        let split_x = (term_width * split_ratio) / 10;
+
+        for i in 0..ra_height {
+            queue!(
+                stdout,
+                cursor::MoveTo(0, i as u16),
+                terminal::Clear(ClearType::CurrentLine)
+            )?;
+        }
+
+        let left_width = split_x.saturating_sub(1);
+        let right_width = term_width.saturating_sub(split_x).saturating_sub(1);
+
+        let left_hdr_bg = if self.glog_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let left_hdr_fg = if self.glog_left_active {
+            Color::Black
+        } else {
+            Color::White
+        };
+        let right_hdr_bg = if !self.glog_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let right_hdr_fg = if !self.glog_left_active {
+            Color::Black
+        } else {
+            Color::Cyan
+        };
+
+        let left_title = " Commits ";
+        let right_title = " Diff ";
+        let left_pad = left_width.saturating_sub(UnicodeWidthStr::width(left_title));
+        let right_pad = right_width.saturating_sub(UnicodeWidthStr::width(right_title));
+
+        queue!(
+            stdout,
+            cursor::MoveTo(0, 0),
+            SetBackgroundColor(left_hdr_bg),
+            SetForegroundColor(left_hdr_fg),
+            SetAttribute(Attribute::Bold),
+            Print(format!("{}{}", left_title, " ".repeat(left_pad))),
+            cursor::MoveTo(split_x as u16, 0),
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::DarkGrey),
+            Print("│"),
+            cursor::MoveTo((split_x + 1) as u16, 0),
+            SetBackgroundColor(right_hdr_bg),
+            SetForegroundColor(right_hdr_fg),
+            Print(format!("{}{}", right_title, " ".repeat(right_pad))),
+            style::ResetColor,
+            SetAttribute(Attribute::Reset)
+        )?;
+
+        let start_y = 1;
+        let visible_height = ra_height.saturating_sub(start_y);
+
+        let mut left_scroll = 0;
+        if self.glog_left_cursor >= visible_height {
+            left_scroll = self.glog_left_cursor - visible_height + 1;
+        }
+
+        for i in 0..visible_height {
+            let y = (start_y + i) as u16;
+            let idx = left_scroll + i;
+            if idx < self.glog_commits.len() {
+                let commit = &self.glog_commits[idx];
+                let is_cursor = idx == self.glog_left_cursor;
+                let (fg, bg) = if is_cursor {
+                    (Color::Black, Color::Cyan)
+                } else {
+                    (Color::White, Color::Black)
+                };
+
+                let (hash, msg) = if commit.len() >= 40 {
+                    commit.split_at(40)
+                } else {
+                    (commit.as_str(), "")
+                };
+                let msg = msg.trim_start();
+                let max_msg_w = left_width.saturating_sub(9);
+                let disp = if UnicodeWidthStr::width(msg) > max_msg_w {
+                    let mut s = String::new();
+                    let mut w = 0;
+                    for g in msg.graphemes(true) {
+                        let gw = UnicodeWidthStr::width(g);
+                        if w + gw + 3 > max_msg_w {
+                            break;
+                        }
+                        s.push_str(g);
+                        w += gw;
+                    }
+                    s.push_str("...");
+                    s
+                } else {
+                    msg.to_string()
+                };
+
+                let hash_short = hash.get(..7).unwrap_or(hash);
+                let line_str = format!("{} {}", hash_short, disp);
+                let pad = left_width.saturating_sub(UnicodeWidthStr::width(line_str.as_str()));
+
+                queue!(
+                    stdout,
+                    cursor::MoveTo(0, y),
+                    SetBackgroundColor(bg),
+                    SetForegroundColor(if is_cursor {
+                        Color::Black
+                    } else {
+                        Color::Yellow
+                    }),
+                    Print(hash_short),
+                    SetForegroundColor(fg),
+                    Print(format!(" {}{}", disp, " ".repeat(pad))),
+                    style::ResetColor
+                )?;
+            }
+            queue!(
+                stdout,
+                cursor::MoveTo(split_x as u16, y),
+                SetForegroundColor(Color::DarkGrey),
+                Print("│"),
+                style::ResetColor
+            )?;
+        }
+
+        if !self.glog_commits.is_empty() {
+            let hash_short = self.glog_commits[self.glog_left_cursor]
+                .get(..7)
+                .unwrap_or(&self.glog_commits[self.glog_left_cursor]);
+            let output = std::process::Command::new("git")
+                .arg("show")
+                .arg(hash_short)
+                .arg("--color=never")
+                .output();
+
+            if let Ok(out) = output {
+                let s = String::from_utf8_lossy(&out.stdout);
+                let lines: Vec<&str> = s.lines().collect();
+
+                let max_scroll = lines.len().saturating_sub(visible_height);
+                if self.glog_right_scroll > max_scroll {
+                    self.glog_right_scroll = max_scroll;
+                }
+
+                for i in 0..visible_height {
+                    let y = (start_y + i) as u16;
+                    let idx = self.glog_right_scroll + i;
+                    if idx < lines.len() {
+                        let line = lines[idx];
+                        let color = if line.starts_with('+') && !line.starts_with("+++") {
+                            Color::Green
+                        } else if line.starts_with('-') && !line.starts_with("---") {
+                            Color::Red
+                        } else if line.starts_with("@@") {
+                            Color::Cyan
+                        } else if line.starts_with("commit ") {
+                            Color::Yellow
+                        } else {
+                            Color::White
+                        };
+
+                        let max_diff_w = right_width.saturating_sub(1);
+                        let disp = if UnicodeWidthStr::width(line) > max_diff_w {
+                            let mut s = String::new();
+                            let mut w = 0;
+                            for g in line.graphemes(true) {
+                                let gw = UnicodeWidthStr::width(g);
+                                if w + gw + 3 > max_diff_w {
+                                    break;
+                                }
+                                s.push_str(g);
+                                w += gw;
+                            }
+                            s.push_str("...");
+                            s
+                        } else {
+                            line.to_string()
+                        };
+                        let pad = max_diff_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+
+                        queue!(
+                            stdout,
+                            cursor::MoveTo((split_x + 1) as u16, y),
+                            SetBackgroundColor(Color::Black),
+                            SetForegroundColor(color),
+                            Print(format!(" {}{}", disp, " ".repeat(pad))),
+                            style::ResetColor
+                        )?;
+                    } else {
+                        queue!(
+                            stdout,
+                            cursor::MoveTo((split_x + 1) as u16, y),
+                            SetBackgroundColor(Color::Black),
+                            Print(" ".repeat(right_width))
+                        )?;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
