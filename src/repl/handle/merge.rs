@@ -277,10 +277,8 @@ impl Repl {
 
         let search = &hunk.search;
         let mut best_match_idx = 0;
-
+        let mut max_score = 0;
         if !search.is_empty() && !file_lines.is_empty() {
-            let mut max_score = 0;
-            // Use a sliding window to find the best match location
             for i in 0..=file_lines.len().saturating_sub(search.len()) {
                 let mut score = 0;
                 for j in 0..search.len() {
@@ -294,17 +292,23 @@ impl Repl {
                     max_score = score;
                     best_match_idx = i;
                 }
-                // If exact match is found, break early
                 if max_score == search.len() {
                     break;
                 }
             }
         }
-
-        self.merge_match_idx = best_match_idx;
-        self.merge_match_end = best_match_idx + search.len().max(1);
-        self.merge_cursor = best_match_idx;
-        self.merge_file_scroll = best_match_idx.saturating_sub(2);
+        if max_score == 0 {
+            const NO_MATCH_IDX: usize = usize::MAX / 2;
+            self.merge_match_idx = NO_MATCH_IDX;
+            self.merge_match_end = NO_MATCH_IDX;
+            self.merge_cursor = 0;
+            self.merge_file_scroll = 0;
+        } else {
+            self.merge_match_idx = best_match_idx;
+            self.merge_match_end = best_match_idx + search.len().max(1);
+            self.merge_cursor = best_match_idx;
+            self.merge_file_scroll = best_match_idx.saturating_sub(2);
+        }
     }
 
     pub(super) fn handle_merge_key(
