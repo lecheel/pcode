@@ -411,7 +411,6 @@ impl Repl {
                                     "  ✅ Applied to buffer. Press Alt-w to save.",
                                     LineStyle::ToolResult,
                                 );
-                                self.next_merge();
                             }
                         }
                         Err(e) => {
@@ -443,7 +442,6 @@ impl Repl {
                             self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error)
                         }
                     }
-                    self.next_merge();
                 }
             }
             KeyCode::Char('r') => {
@@ -929,7 +927,7 @@ impl Repl {
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [a]pply [r]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
+            Print("  [a]pply [r]ecalc [l]nextHunk [n]gotoAnchor [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
             style::ResetColor
         )?;
         let start_y = 1;
