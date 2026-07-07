@@ -890,7 +890,7 @@ impl Repl {
                 get_skill_str(" F3", "Full"),
                 get_skill_str(" F4", "Hunks"),
                 get_skill_str(" F5", "--NA"),
-                get_skill_str(" F6", "--NA"),
+                get_skill_str(" F6", "GLog"),
                 pad_item("  *: --NA")
             );
             let line2_str = format!(
