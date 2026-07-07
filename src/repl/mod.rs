@@ -104,6 +104,9 @@ pub struct Repl {
     pub(crate) pending_merge: Option<Vec<crate::patch::PatchHunk>>,
     pub(crate) merge_index: usize,
     pub(crate) merge_scroll: usize,
+    pub(crate) merge_file_scroll: usize,
+    pub(crate) merge_match_idx: usize,
+    pub(crate) merge_anchor_offset: i32,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -158,6 +161,9 @@ impl Repl {
             pending_merge: None,
             merge_index: 0,
             merge_scroll: 0,
+            merge_file_scroll: 0,
+            merge_match_idx: 0,
+            merge_anchor_offset: 0,
         }
     }
 
