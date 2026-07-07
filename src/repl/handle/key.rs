@@ -237,7 +237,11 @@ impl Repl {
             self.show_git_status(stdout, None)?;
             return Ok(());
         }
-
+        if key.code == KeyCode::F(6) {
+            self.execute_command("glog", stdout)?;
+            self.render(stdout)?;
+            return Ok(());
+        }
         // 1. Check if any skill group explicitly claims this F-key
         let key_str = match key.code {
             KeyCode::F(n) => Some(format!("F{}", n)),
