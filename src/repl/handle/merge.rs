@@ -142,12 +142,34 @@ impl Repl {
         let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
         
-        // Use diff::find_best_match to accurately locate the anchor
-        let match_result = crate::diff::find_best_match(&hunk.search, &file_lines, true);
-        self.merge_match_idx = match_result.file_start;
-        self.merge_match_end = match_result.file_start + hunk.search.len().max(1);
-        self.merge_cursor = match_result.file_start;
-        self.merge_file_scroll = match_result.file_start.saturating_sub(2);
+        let search = &hunk.search;
+        let mut best_match_idx = 0;
+        
+        if !search.is_empty() && !file_lines.is_empty() {
+            let mut max_score = 0;
+            // Use a sliding window to find the best match location
+            for i in 0..=file_lines.len().saturating_sub(search.len()) {
+                let mut score = 0;
+                for j in 0..search.len() {
+                    if i + j < file_lines.len() && file_lines[i + j].trim_end() == search[j].trim_end() {
+                        score += 1;
+                    }
+                }
+                if score > max_score {
+                    max_score = score;
+                    best_match_idx = i;
+                }
+                // If exact match is found, break early
+                if max_score == search.len() {
+                    break;
+                }
+            }
+        }
+
+        self.merge_match_idx = best_match_idx;
+        self.merge_match_end = best_match_idx + search.len().max(1);
+        self.merge_cursor = best_match_idx;
+        self.merge_file_scroll = best_match_idx.saturating_sub(2);
     }
 
     pub(super) fn handle_merge_key(
@@ -270,7 +292,7 @@ impl Repl {
                     self.merge_scroll = self.merge_scroll.saturating_sub(vis);
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.pending_merge = None;
                 self.mode = Mode::Insert;
                 self.push_info("  Exited Merge Mode.", LineStyle::Dim);
