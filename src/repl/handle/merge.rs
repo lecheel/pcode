@@ -659,12 +659,19 @@ impl Repl {
             self.merge_search_query = None;
             self.calc_merge_file_scroll();
         } else {
-            self.pending_merge = None;
-            self.mode = Mode::Insert;
-            self.push_info(
-                "  ✅ All hunks processed. Exited Merge Mode.",
-                LineStyle::Info,
-            );
+            if self.merge_buffer_apply {
+                self.push_info(
+                    "  ✅ All hunks processed. Press Alt-w to save & exit.",
+                    LineStyle::Info,
+                );
+            } else {
+                self.pending_merge = None;
+                self.mode = Mode::Insert;
+                self.push_info(
+                    "  ✅ All hunks processed. Exited Merge Mode.",
+                    LineStyle::Info,
+                );
+            }
         }
     }
 
