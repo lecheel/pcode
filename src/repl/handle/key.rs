@@ -162,6 +162,29 @@ impl Repl {
             return Ok(());
         }
 
+        if key.code == KeyCode::F(9) {
+            if !self.waiting {
+                let content: String = self
+                    .buffer()
+                    .lines()
+                    .iter()
+                    .map(|l| l.content())
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                let hunks = crate::patch::parse_patches(&content);
+                if !hunks.is_empty() {
+                    self.start_merge(hunks);
+                } else {
+                    self.push_info(
+                        "  ❌ No patches found in current buffer.",
+                        LineStyle::Error,
+                    );
+                    self.scroll_to_bottom();
+                }
+                self.render(stdout)?;
+            }
+            return Ok(());
+        }
         if key.code == KeyCode::F(11) {
             self.execute_command("workflow", stdout)?;
             self.render(stdout)?;

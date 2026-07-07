@@ -881,7 +881,7 @@ impl Repl {
                 "{}{}{}{}{}{}",
                 get_skill_str(" F7", "--NA"),
                 get_skill_str(" F8", "Func"),
-                get_skill_str(" F9", "--NA"),
+                get_skill_str(" F9", "Merge"),
                 get_skill_str("F10", "Skills"),
                 get_skill_str("F11", "Prompt"),
                 get_skill_str("F12", "Cancel")

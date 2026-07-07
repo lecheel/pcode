@@ -218,7 +218,7 @@ impl Repl {
         let idx = self.llm_buffer_idx();
         self.active_buffer = idx;
         self.push_info(
-            "  🔀 Entering Merge Mode. [a]pply [r]eject [n]ext/[p]rev hunk  j/k cursor  J/K anchor  ma/mA set  [q]uit",
+            "  🔀 Entering Merge Mode. [a]pply [r]eject  ma/mA set  [q]uit",
             LineStyle::Info,
         );
     }
@@ -655,7 +655,7 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]cursor [J/K]anchor [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}]  [a]pply [r]eject [q]uit  [Tab]panel [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len()
             )),
