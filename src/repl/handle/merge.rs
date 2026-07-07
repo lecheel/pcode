@@ -355,29 +355,35 @@ impl Repl {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
-
+                let file_content = if let Some(idx) =
+                    self.buffers.iter().position(|b| b.name() == hunk.filename)
+                {
+                    self.buffers[idx]
+                        .lines()
+                        .iter()
+                        .map(|l| l.content().clone())
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                } else {
+                    std::fs::read_to_string(&file_path).unwrap_or_default()
+                };
+                let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+                let start = self.merge_match_idx.min(file_lines.len());
+                let end = self.merge_match_end.min(file_lines.len());
+                let actual_search = if start < end {
+                    file_lines[start..end].join("\n")
+                } else {
+                    hunk.search.join("\n")
+                };
                 if self.merge_buffer_apply {
                     let temp_path = file_path.with_extension("codex_eyes_mergetmp");
-                    let file_content = if let Some(idx) =
-                        self.buffers.iter().position(|b| b.name() == hunk.filename)
-                    {
-                        self.buffers[idx]
-                            .lines()
-                            .iter()
-                            .map(|l| l.content().clone())
-                            .collect::<Vec<String>>()
-                            .join("\n")
-                    } else {
-                        std::fs::read_to_string(&file_path).unwrap_or_default()
-                    };
                     push_undo(&hunk.filename, &file_content);
                     self.merge_last_modified = Some((hunk.filename.clone(), true));
                     let _ = std::fs::write(&temp_path, &file_content);
-
                     let temp_filename = temp_path.to_string_lossy().to_string();
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
-                        hunk.search.join("\n"),
+                        actual_search,
                         hunk.replace.join("\n")
                     );
                     match crate::patch::apply_patch(
@@ -417,13 +423,13 @@ impl Repl {
                     }
                     let _ = std::fs::remove_file(&temp_path);
                 } else {
-                    if let Ok(file_content) = std::fs::read_to_string(&file_path) {
-                        push_undo(&hunk.filename, &file_content);
+                    if let Ok(disk_content) = std::fs::read_to_string(&file_path) {
+                        push_undo(&hunk.filename, &disk_content);
                         self.merge_last_modified = Some((hunk.filename.clone(), false));
                     }
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
-                        hunk.search.join("\n"),
+                        actual_search,
                         hunk.replace.join("\n")
                     );
                     match crate::patch::apply_patch(
@@ -899,12 +905,16 @@ impl Repl {
         } else {
             100
         };
-        let match_label = if equal_count == 0 {
-            "match:none (ghost anchor — r recalc, ma/mA set)".to_string()
+        let (match_label, match_color) = if equal_count == 0 {
+            (
+                "match:none (ghost anchor — r recalc, ma/mA set)".to_string(),
+                Color::Red,
+            )
+        } else if match_percent == 100 {
+            (format!("match:{}%", match_percent), Color::Green)
         } else {
-            format!("match:{}%", match_percent)
+            (format!("match:{}%", match_percent), Color::Yellow)
         };
-        // ── status row ─────────────────────────────────────────
         let hint_y = self.height.saturating_sub(3) as u16;
         queue!(
             stdout,
@@ -912,11 +922,14 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] {}  [a]pply [r]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}] ",
                 self.merge_index + 1,
-                hunks.len(),
-                match_label
+                hunks.len()
             )),
+            SetForegroundColor(match_color),
+            Print(&match_label),
+            SetForegroundColor(Color::Yellow),
+            Print("  [a]pply [r]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
             style::ResetColor
         )?;
         let start_y = 1;
@@ -963,11 +976,9 @@ impl Repl {
             let f_idx = self.merge_file_scroll + i;
             if f_idx < file_lines.len() {
                 let line = &file_lines[f_idx];
-                let has_confident_match = equal_count > 0;
-                let is_in_match =
-                    has_confident_match && f_idx >= actual_match_idx && f_idx < matched_end;
+                let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
                 let is_cursor = f_idx == cursor_line;
-                let is_ghost_anchor = !has_confident_match && f_idx == actual_match_idx;
+                let is_ghost_anchor = !is_in_match && f_idx == actual_match_idx;
                 let line_num = f_idx + 1;
                 let cursor_mark = if is_cursor {
                     ">"

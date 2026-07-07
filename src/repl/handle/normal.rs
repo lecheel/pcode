@@ -41,7 +41,8 @@ impl Repl {
             let result = self.execute_command("w", stdout)?;
             if let CommandResult::Quit = result {
                 self.editor.save_history(&self.config.repl.history_file);
-                self.cmd_editor.save_history(&self.config.repl.command_history_file);
+                self.cmd_editor
+                    .save_history(&self.config.repl.command_history_file);
                 if let Some(handle) = self.agent_handle.take() {
                     handle.abort();
                 }

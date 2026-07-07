@@ -688,7 +688,11 @@ impl Repl {
     pub(crate) fn render_spinner_only(&self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let status_y = self.height - 2;
         queue!(stdout, cursor::MoveTo(0, status_y))?;
-        let mode_str = self.mode.as_str();
+        let mode_str = if let Some(c) = self.pending {
+            format!("{}({})", self.mode.as_str(), c)
+        } else {
+            self.mode.as_str().to_string()
+        };
         let mode_color = self.mode.status_color();
         let skill_str = if let Some(agent) = self.agent.as_ref() {
             let groups = &agent.skill_groups;
@@ -718,7 +722,11 @@ impl Repl {
         } else {
             buffer_name.to_string()
         };
-        let modified_indicator = if self.modified_buffers.contains(buffer_name) { "[+] " } else { "" };
+        let modified_indicator = if self.modified_buffers.contains(buffer_name) {
+            "[+] "
+        } else {
+            ""
+        };
         let buffer_prefix = format!("[{}/{}] ", self.active_buffer + 1, self.buffers.len());
         let git_info = if self.cached_git_info.is_empty() {
             String::new()

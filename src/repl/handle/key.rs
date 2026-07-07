@@ -81,12 +81,19 @@ impl Repl {
                 KeyCode::Char('w') => {
                     if self.mode == Mode::Merge {
                         let mut saved_count = 0;
-                        let modified_files: Vec<String> = self.modified_buffers.iter().cloned().collect();
+                        let modified_files: Vec<String> =
+                            self.modified_buffers.iter().cloned().collect();
                         for file in &modified_files {
                             if let Some(idx) = self.buffers.iter().position(|b| b.name() == file) {
-                                let root = std::path::PathBuf::from(&self.config.tools.project_root);
+                                let root =
+                                    std::path::PathBuf::from(&self.config.tools.project_root);
                                 let path = root.join(file);
-                                let content: String = self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n");
+                                let content: String = self.buffers[idx]
+                                    .lines()
+                                    .iter()
+                                    .map(|l| l.content().clone())
+                                    .collect::<Vec<String>>()
+                                    .join("\n");
                                 if std::fs::write(&path, content).is_ok() {
                                     saved_count += 1;
                                 }
@@ -95,7 +102,13 @@ impl Repl {
                         self.modified_buffers.clear();
                         self.pending_merge = None;
                         self.mode = Mode::Normal;
-                        self.push_info(format!("  💾 Saved {} buffer(s) to disk. Exited Merge Mode.", saved_count), LineStyle::ToolResult);
+                        self.push_info(
+                            format!(
+                                "  💾 Saved {} buffer(s) to disk. Exited Merge Mode.",
+                                saved_count
+                            ),
+                            LineStyle::ToolResult,
+                        );
                         self.render(stdout)?;
                         return Ok(());
                     }
@@ -199,10 +212,7 @@ impl Repl {
                     self.merge_buffer_apply = true;
                     self.start_merge(hunks);
                 } else {
-                    self.push_info(
-                        "  ❌ No patches found in current buffer.",
-                        LineStyle::Error,
-                    );
+                    self.push_info("  ❌ No patches found in current buffer.", LineStyle::Error);
                     self.scroll_to_bottom();
                 }
                 self.render(stdout)?;
