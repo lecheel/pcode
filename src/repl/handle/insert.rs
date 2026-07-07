@@ -11,7 +11,9 @@ use std::io;
 #[cfg(target_os = "macos")]
 fn read_clipboard() -> Result<String, String> {
     use std::process::Command;
-    let output = Command::new("pbpaste").output().map_err(|e| e.to_string())?;
+    let output = Command::new("pbpaste")
+        .output()
+        .map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -55,7 +57,11 @@ impl Repl {
         }
 
         if key.modifiers.contains(KeyModifiers::ALT) {
-            if let KeyCode::Char('v') | KeyCode::Char('V') | KeyCode::Char('p') | KeyCode::Char('P') = key.code {
+            if let KeyCode::Char('v')
+            | KeyCode::Char('V')
+            | KeyCode::Char('p')
+            | KeyCode::Char('P') = key.code
+            {
                 let content = read_clipboard().unwrap_or_default();
                 let hunks = crate::patch::parse_patches(&content);
                 if !hunks.is_empty() {

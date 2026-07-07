@@ -884,23 +884,24 @@ impl Repl {
             };
 
             let line1_str = format!(
-                "{}{}{}{}{}{}",
+                "{}{}{}{}{}{}{}",
                 get_skill_str(" F1", "Git"),
                 get_skill_str(" F2", "Chat"),
                 get_skill_str(" F3", "Full"),
                 get_skill_str(" F4", "Hunks"),
                 get_skill_str(" F5", "--NA"),
-                get_skill_str(" F6", "--NA")
+                get_skill_str(" F6", "--NA"),
+                pad_item("  *: --NA")
             );
-
             let line2_str = format!(
-                "{}{}{}{}{}{}",
+                "{}{}{}{}{}{}{}",
                 get_skill_str(" F7", "--NA"),
                 get_skill_str(" F8", "Func"),
                 get_skill_str(" F9", "Merge"),
                 get_skill_str("F10", "Skills"),
                 get_skill_str("F11", "Prompt"),
-                get_skill_str("F12", "Cancel")
+                get_skill_str("F12", "Cancel"),
+                pad_item("Ins: Paste todo")
             );
 
             let l1 = pad(&line1_str);
