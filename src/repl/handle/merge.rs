@@ -904,10 +904,7 @@ impl Repl {
             100
         };
         let (match_label, match_color) = if equal_count == 0 {
-            (
-                "match:none (ghost anchor — r recalc, ma/mA set)".to_string(),
-                Color::Red,
-            )
+            ("match:none".to_string(), Color::Red)
         } else if match_percent == 100 {
             (format!("match:{}%", match_percent), Color::Green)
         } else {
