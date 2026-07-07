@@ -348,6 +348,8 @@ impl Repl {
                     } else {
                         std::fs::read_to_string(&file_path).unwrap_or_default()
                     };
+                    push_undo(&hunk.filename, &file_content);
+                    self.merge_last_modified = Some((hunk.filename.clone(), true));
                     let _ = std::fs::write(&temp_path, &file_content);
                     
                     let temp_filename = temp_path.to_string_lossy().to_string();
@@ -382,7 +384,7 @@ impl Repl {
                 } else {
                     if let Ok(file_content) = std::fs::read_to_string(&file_path) {
                         push_undo(&hunk.filename, &file_content);
-                        self.merge_last_modified = Some(hunk.filename.clone());
+                        self.merge_last_modified = Some((hunk.filename.clone(), false));
                     }
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
@@ -591,7 +593,7 @@ impl Repl {
                 let file_path = project_root.join(&hunk.filename);
                 let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
                 push_undo(&hunk.filename, &file_content);
-                self.merge_last_modified = Some(hunk.filename.clone());
+                self.merge_last_modified = Some((hunk.filename.clone(), false));
                 let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
@@ -615,7 +617,7 @@ impl Repl {
 
                 if !file_lines.is_empty() {
                     push_undo(&hunk.filename, &file_content);
-                    self.merge_last_modified = Some(hunk.filename.clone());
+                    self.merge_last_modified = Some((hunk.filename.clone(), false));
                     let line_idx = self.merge_cursor.min(file_lines.len() - 1);
                     file_lines.remove(line_idx);
                     std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
@@ -635,19 +637,41 @@ impl Repl {
             KeyCode::Char('u') => {
                 let hunk_filename =
                     self.pending_merge.as_ref().unwrap()[self.merge_index].filename.clone();
-                let target_file = self.merge_last_modified.clone().unwrap_or(hunk_filename.clone());
-                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
-                let file_path = project_root.join(&target_file);
+                let (target_file, was_buffer) = self
+                    .merge_last_modified
+                    .clone()
+                    .unwrap_or((hunk_filename.clone(), self.merge_buffer_apply));
                 if let Some(undo_content) = pop_undo(&target_file) {
-                    std::fs::write(&file_path, &undo_content)?;
-                    self.push_info(
-                        format!("  ↩️ Undo successful for {}.", target_file),
-                        LineStyle::Info,
-                    );
+                    if was_buffer {
+                        let buf_idx = if let Some(idx) =
+                            self.buffers.iter().position(|b| b.name() == target_file)
+                        {
+                            idx
+                        } else {
+                            let idx = self.buffers.len();
+                            self.buffers.push(ResponseBuffer::with_name(&target_file));
+                            idx
+                        };
+                        self.buffers[buf_idx].clear();
+                        self.buffers[buf_idx].push_str(&undo_content, LineStyle::Plain);
+                        self.push_info(
+                            format!("  ↩️ Undo successful for {} (buffer).", target_file),
+                            LineStyle::Info,
+                        );
+                    } else {
+                        let project_root =
+                            std::path::PathBuf::from(&self.config.tools.project_root);
+                        let file_path = project_root.join(&target_file);
+                        std::fs::write(&file_path, &undo_content)?;
+                        self.push_info(
+                            format!("  ↩️ Undo successful for {} (disk).", target_file),
+                            LineStyle::Info,
+                        );
+                    }
                     if undo_stack_len(&target_file) == 0 {
                         self.merge_last_modified = None;
                     }
-                    if hunk_filename == target_file {
+                    if hunk_filename == target_file && !was_buffer {
                         let old_cursor = self.merge_cursor;
                         self.calc_merge_file_scroll();
                         self.merge_cursor = old_cursor;

@@ -113,7 +113,7 @@ pub struct Repl {
     pub(crate) merge_search_query: Option<String>,
     pub(crate) modified_buffers: std::collections::HashSet<String>,
     pub(crate) merge_buffer_apply: bool,
-    pub(crate) merge_last_modified: Option<String>,
+    pub(crate) merge_last_modified: Option<(String, bool)>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
