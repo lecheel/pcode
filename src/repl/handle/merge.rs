@@ -246,8 +246,6 @@ impl Repl {
         self.merge_search_query = None;
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
-        let idx = self.llm_buffer_idx();
-        self.active_buffer = idx;
         self.push_info(
             "  🔀 Entering Merge Mode. [a]pply [r]eject  ma/mA set  [q]uit",
             LineStyle::Info,
