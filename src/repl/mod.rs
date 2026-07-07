@@ -111,6 +111,8 @@ pub struct Repl {
     pub(crate) merge_left_active: bool,
     pub(crate) merge_right_cursor: usize,
     pub(crate) merge_search_query: Option<String>,
+    pub(crate) modified_buffers: std::collections::HashSet<String>,
+    pub(crate) merge_buffer_apply: bool,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -172,6 +174,8 @@ impl Repl {
             merge_left_active: true,
             merge_right_cursor: 0,
             merge_search_query: None,
+            modified_buffers: std::collections::HashSet::new(),
+            merge_buffer_apply: false,
         }
     }
 
@@ -326,7 +330,6 @@ impl Repl {
         }
 
         let closed_idx = self.active_buffer;
-
         if self.llm_buffer_idx == Some(closed_idx) || self.console_buffer_idx == Some(closed_idx) {
             self.buffers[closed_idx].clear();
             self.push_info(
@@ -336,7 +339,8 @@ impl Repl {
             self.scroll_to_bottom();
             return;
         }
-
+        let closed_name = self.buffers[closed_idx].name().to_string();
+        self.modified_buffers.remove(&closed_name);
         self.buffers.remove(closed_idx);
 
         if let Some(idx) = self.llm_buffer_idx.as_mut() {
@@ -712,10 +716,12 @@ impl Repl {
         } else {
             buffer_name.to_string()
         };
+        let modified_indicator = if self.modified_buffers.contains(buffer_name) { "[+] " } else { "" };
         let buffer_info = format!(
-            "[{}/{}] {}",
+            "[{}/{}] {}{}",
             self.active_buffer + 1,
             self.buffers.len(),
+            modified_indicator,
             truncated_name
         );
         let git_info = if self.cached_git_info.is_empty() {

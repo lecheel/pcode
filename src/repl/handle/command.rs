@@ -384,6 +384,7 @@ impl Repl {
                                         LineStyle::ToolResult,
                                     );
                                     self.buffer_mut().set_name(&path_str);
+                                    self.modified_buffers.remove(&path_str);
                                 }
                                 Err(e) => self.push_command_info(
                                     format!("  ❌ Write failed: {}", e),

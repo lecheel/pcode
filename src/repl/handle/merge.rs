@@ -323,31 +323,74 @@ impl Repl {
             return Ok(());
         }
         match key.code {
+            KeyCode::F(9) => {
+                self.merge_buffer_apply = !self.merge_buffer_apply;
+                if self.merge_buffer_apply {
+                    self.push_info("  🔀 Buffer Mode ON. [a] will apply to buffer (Alt-w to save).", LineStyle::Info);
+                } else {
+                    self.push_info("  🔀 Buffer Mode OFF. [a] will apply to file.", LineStyle::Info);
+                }
+            }
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
-
                 let file_path = project_root.join(&hunk.filename);
-                if let Ok(file_content) = std::fs::read_to_string(&file_path) {
-                    push_undo(&hunk.filename, &file_content);
-                }
 
-                let patch_text = format!(
-                    "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
-                    hunk.search.join("\n"),
-                    hunk.replace.join("\n")
-                );
-
-                match crate::patch::apply_patch(
-                    &hunk.filename,
-                    &patch_text,
-                    &project_root,
-                    &self.config.tools.allow_paths,
-                ) {
-                    Ok(msg) => self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult),
-                    Err(e) => self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error),
+                if self.merge_buffer_apply {
+                    let temp_path = file_path.with_extension("codex_eyes_mergetmp");
+                    if let Ok(file_content) = std::fs::read_to_string(&file_path) {
+                        let _ = std::fs::write(&temp_path, &file_content);
+                    }
+                    let temp_filename = temp_path.to_string_lossy().to_string();
+                    let patch_text = format!(
+                        "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
+                        hunk.search.join("\n"),
+                        hunk.replace.join("\n")
+                    );
+                    match crate::patch::apply_patch(&temp_filename, &patch_text, &project_root, &self.config.tools.allow_paths) {
+                        Ok(_) => {
+                            if let Ok(modified_content) = std::fs::read_to_string(&temp_path) {
+                                let buf_idx = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                                    idx
+                                } else {
+                                    let idx = self.buffers.len();
+                                    self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
+                                    idx
+                                };
+                                self.active_buffer = buf_idx;
+                                self.buffers[buf_idx].clear();
+                                self.buffers[buf_idx].push_str(&modified_content, LineStyle::Plain);
+                                self.modified_buffers.insert(hunk.filename.clone());
+                                self.mode = Mode::Normal;
+                                self.pending_merge = None;
+                                self.push_info("  ✅ Applied to buffer. Press Alt-w to save.", LineStyle::ToolResult);
+                            }
+                        }
+                        Err(e) => {
+                            self.push_info(format!("  ❌ Merge to buffer failed: {}", e), LineStyle::Error);
+                        }
+                    }
+                    let _ = std::fs::remove_file(&temp_path);
+                } else {
+                    if let Ok(file_content) = std::fs::read_to_string(&file_path) {
+                        push_undo(&hunk.filename, &file_content);
+                    }
+                    let patch_text = format!(
+                        "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
+                        hunk.search.join("\n"),
+                        hunk.replace.join("\n")
+                    );
+                    match crate::patch::apply_patch(
+                        &hunk.filename,
+                        &patch_text,
+                        &project_root,
+                        &self.config.tools.allow_paths,
+                    ) {
+                        Ok(msg) => self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult),
+                        Err(e) => self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error),
+                    }
+                    self.next_merge();
                 }
-                self.next_merge();
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.push_info("  🚫 Rejected hunk.", LineStyle::Error);

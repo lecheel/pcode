@@ -37,6 +37,19 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
+        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('w') {
+            let result = self.execute_command("w", stdout)?;
+            if let CommandResult::Quit = result {
+                self.editor.save_history(&self.config.repl.history_file);
+                self.cmd_editor.save_history(&self.config.repl.command_history_file);
+                if let Some(handle) = self.agent_handle.take() {
+                    handle.abort();
+                }
+                return Err(anyhow::anyhow!("__QUIT__"));
+            }
+            self.render(stdout)?;
+            return Ok(());
+        }
         if let Some(target) = self.pending_reset_target.take() {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
