@@ -185,7 +185,7 @@ impl Repl {
                 right_rows.push((l.clone(), Color::Red, false));
             }
             right_rows.push((
-                format!("... placeholder ({}) ...", search.len() - fold * 2),
+                format!("        ... ({}) ...", search.len() - fold * 2),
                 Color::DarkGrey,
                 false,
             ));
@@ -204,7 +204,7 @@ impl Repl {
                 right_rows.push((l.clone(), Color::Green, false));
             }
             right_rows.push((
-                format!("... placeholder ({}) ...", replace.len() - fold * 2),
+                format!("        ... ({}) ...", replace.len() - fold * 2),
                 Color::DarkGrey,
                 false,
             ));
@@ -572,7 +572,7 @@ impl Repl {
                     let right_rows = self.get_right_rows(&hunk);
                     if cursor < right_rows.len() {
                         let (text, _color, is_marker) = &right_rows[cursor];
-                        if !*is_marker && !text.starts_with("... placeholder") {
+                        if !*is_marker && !text.starts_with("... ") {
                             target_line = Some(text.clone());
                         }
                     }
