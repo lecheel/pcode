@@ -115,6 +115,68 @@ fn render_spans(
 }
 
 impl Repl {
+    fn build_right_rows(hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
+        let fold = 10usize;
+        let mut right_rows: Vec<(String, Color, bool)> = Vec::new();
+        right_rows.push(("<<<<<<< SEARCH".to_string(), Color::Magenta, true));
+        let search = &hunk.search;
+        if search.len() <= fold * 2 {
+            for l in search {
+                right_rows.push((l.clone(), Color::Red, false));
+            }
+        } else {
+            for l in &search[..fold] {
+                right_rows.push((l.clone(), Color::Red, false));
+            }
+            right_rows.push((
+                format!("... placeholder ({}) ...", search.len() - fold * 2),
+                Color::DarkGrey,
+                false,
+            ));
+            for l in &search[search.len() - fold..] {
+                right_rows.push((l.clone(), Color::Red, false));
+            }
+        }
+        right_rows.push(("=======".to_string(), Color::Magenta, true));
+        let replace = &hunk.replace;
+        if replace.len() <= fold * 2 {
+            for l in replace {
+                right_rows.push((l.clone(), Color::Green, false));
+            }
+        } else {
+            for l in &replace[..fold] {
+                right_rows.push((l.clone(), Color::Green, false));
+            }
+            right_rows.push((
+                format!("... placeholder ({}) ...", replace.len() - fold * 2),
+                Color::DarkGrey,
+                false,
+            ));
+            for l in &replace[replace.len() - fold..] {
+                right_rows.push((l.clone(), Color::Green, false));
+            }
+        }
+        right_rows.push((">>>>>>> REPLACE".to_string(), Color::Magenta, true));
+        right_rows
+    }
+    fn get_right_rows(&self, hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
+        Self::build_right_rows(hunk)
+    }
+
+    fn calc_right_rows_len(hunk: &PatchHunk) -> usize {
+        let fold = 10usize;
+        let search_len = if hunk.search.len() <= fold * 2 {
+            hunk.search.len()
+        } else {
+            fold * 2 + 1
+        };
+        let replace_len = if hunk.replace.len() <= fold * 2 {
+            hunk.replace.len()
+        } else {
+            fold * 2 + 1
+        };
+        3 + search_len + replace_len
+    }
     pub fn start_merge(&mut self, hunks: Vec<PatchHunk>) {
         if hunks.is_empty() {
             return;
@@ -125,6 +187,8 @@ impl Repl {
         self.merge_index = 0;
         self.merge_scroll = 0;
         self.merge_left_active = true;
+        self.merge_right_cursor = 0;
+        self.merge_search_query = None;
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         let idx = self.llm_buffer_idx();
@@ -141,17 +205,19 @@ impl Repl {
         let file_path = project_root.join(&hunk.filename);
         let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
-        
+
         let search = &hunk.search;
         let mut best_match_idx = 0;
-        
+
         if !search.is_empty() && !file_lines.is_empty() {
             let mut max_score = 0;
             // Use a sliding window to find the best match location
             for i in 0..=file_lines.len().saturating_sub(search.len()) {
                 let mut score = 0;
                 for j in 0..search.len() {
-                    if i + j < file_lines.len() && file_lines[i + j].trim_end() == search[j].trim_end() {
+                    if i + j < file_lines.len()
+                        && file_lines[i + j].trim_end() == search[j].trim_end()
+                    {
                         score += 1;
                     }
                 }
@@ -246,14 +312,18 @@ impl Repl {
                 if self.merge_left_active {
                     self.merge_cursor += 1;
                 } else {
-                    self.merge_scroll += 1;
+                    let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
+                    let right_rows_len = Self::calc_right_rows_len(hunk);
+                    if self.merge_right_cursor < right_rows_len.saturating_sub(1) {
+                        self.merge_right_cursor += 1;
+                    }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 if self.merge_left_active {
                     self.merge_cursor = self.merge_cursor.saturating_sub(1);
                 } else {
-                    self.merge_scroll = self.merge_scroll.saturating_sub(1);
+                    self.merge_right_cursor = self.merge_right_cursor.saturating_sub(1);
                 }
             }
             KeyCode::Char('J') => {
@@ -281,6 +351,10 @@ impl Repl {
                     self.merge_cursor += vis;
                 } else {
                     self.merge_scroll += vis;
+                    let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
+                    let right_rows_len = Self::calc_right_rows_len(hunk);
+                    self.merge_right_cursor =
+                        (self.merge_right_cursor + vis).min(right_rows_len.saturating_sub(1));
                 }
             }
             KeyCode::PageUp => {
@@ -290,6 +364,78 @@ impl Repl {
                     self.merge_cursor = self.merge_cursor.saturating_sub(vis);
                 } else {
                     self.merge_scroll = self.merge_scroll.saturating_sub(vis);
+                    self.merge_right_cursor = self.merge_right_cursor.saturating_sub(vis);
+                }
+            }
+            KeyCode::Enter => {
+                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                let file_path = project_root.join(&hunk.filename);
+                let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+                let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+
+                let mut target_line: Option<String> = None;
+                let start_idx = self.merge_cursor + 1;
+
+                if !self.merge_left_active {
+                    let cursor = self.merge_right_cursor;
+                    let right_rows = self.get_right_rows(&hunk);
+                    if cursor < right_rows.len() {
+                        let (text, _color, is_marker) = &right_rows[cursor];
+                        if !*is_marker && !text.starts_with("... placeholder") {
+                            target_line = Some(text.clone());
+                        }
+                    }
+
+                    if let Some(line) = &target_line {
+                        self.merge_search_query = Some(line.clone());
+                    } else {
+                        self.merge_search_query = None;
+                        self.push_info(
+                            "  Cannot search for marker or placeholder.",
+                            LineStyle::Error,
+                        );
+                        self.render(stdout)?;
+                        return Ok(());
+                    }
+                } else {
+                    target_line = self.merge_search_query.clone();
+                    if target_line.is_none() {
+                        self.push_info(
+                            "  No search query. Select a line on right panel.",
+                            LineStyle::Error,
+                        );
+                        self.render(stdout)?;
+                        return Ok(());
+                    }
+                }
+
+                if let Some(line) = target_line {
+                    let mut found_idx = None;
+                    for i in start_idx..file_lines.len() {
+                        if file_lines[i].trim_end() == line.trim_end() {
+                            found_idx = Some(i);
+                            break;
+                        }
+                    }
+                    if found_idx.is_none() {
+                        let end = start_idx.min(file_lines.len());
+                        for i in 0..end {
+                            if file_lines[i].trim_end() == line.trim_end() {
+                                found_idx = Some(i);
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(idx) = found_idx {
+                        self.merge_cursor = idx;
+                        self.merge_match_idx = idx;
+                        self.merge_match_end = idx + 1;
+                        self.push_info(format!("  Matched line at {}", idx + 1), LineStyle::Info);
+                    } else {
+                        self.push_info("  No match found.", LineStyle::Error);
+                    }
                 }
             }
             KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -307,6 +453,8 @@ impl Repl {
         if self.merge_index + 1 < self.pending_merge.as_ref().unwrap().len() {
             self.merge_index += 1;
             self.merge_scroll = 0;
+            self.merge_right_cursor = 0;
+            self.merge_search_query = None;
             self.calc_merge_file_scroll();
         } else {
             self.pending_merge = None;
@@ -362,16 +510,30 @@ impl Repl {
         // ── header row: description (left) | filename (right) ──
         let desc = " detail full content sync the line to left";
         let desc_disp = trunc(desc, left_width.saturating_sub(1));
-        let desc_pad = left_width
-            .saturating_sub(UnicodeWidthStr::width(desc_disp.as_str()) + 1);
+        let desc_pad = left_width.saturating_sub(UnicodeWidthStr::width(desc_disp.as_str()) + 1);
         let fname_disp = trunc(&hunk.filename, right_width.saturating_sub(1));
-        let fname_pad = right_width
-            .saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
+        let fname_pad = right_width.saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
 
-        let left_hdr_bg = if self.merge_left_active { Color::Cyan } else { Color::DarkGrey };
-        let left_hdr_fg = if self.merge_left_active { Color::Black } else { Color::White };
-        let right_hdr_bg = if !self.merge_left_active { Color::Cyan } else { Color::DarkGrey };
-        let right_hdr_fg = if !self.merge_left_active { Color::Black } else { Color::Cyan };
+        let left_hdr_bg = if self.merge_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let left_hdr_fg = if self.merge_left_active {
+            Color::Black
+        } else {
+            Color::White
+        };
+        let right_hdr_bg = if !self.merge_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let right_hdr_fg = if !self.merge_left_active {
+            Color::Black
+        } else {
+            Color::Cyan
+        };
 
         queue!(
             stdout,
@@ -399,7 +561,7 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]cursor [J/K]anchor [ma/mA]set ",
+                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]cursor [J/K]anchor [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len()
             )),
@@ -407,52 +569,7 @@ impl Repl {
         )?;
 
         // ── build right panel rows (the patch) ──────────────────
-        let fold = 5usize;
-        let mut right_rows: Vec<(String, Color, bool)> = Vec::new();
-        right_rows.push(("<<<<<<< SEARCH".to_string(), Color::Magenta, true));
-
-        let search = &hunk.search;
-        if search.len() <= fold * 2 {
-            for l in search {
-                right_rows.push((l.clone(), Color::Red, false));
-            }
-        } else {
-            for l in &search[..fold] {
-                right_rows.push((l.clone(), Color::Red, false));
-            }
-            right_rows.push((
-                format!("... placeholder ({}) ...", search.len() - fold * 2),
-                Color::DarkGrey,
-                false,
-            ));
-            for l in &search[search.len() - fold..] {
-                right_rows.push((l.clone(), Color::Red, false));
-            }
-        }
-
-        right_rows.push(("=======".to_string(), Color::Magenta, true));
-
-        let replace = &hunk.replace;
-        if replace.len() <= fold * 2 {
-            for l in replace {
-                right_rows.push((l.clone(), Color::Green, false));
-            }
-        } else {
-            for l in &replace[..fold] {
-                right_rows.push((l.clone(), Color::Green, false));
-            }
-            right_rows.push((
-                format!("... placeholder ({}) ...", replace.len() - fold * 2),
-                Color::DarkGrey,
-                false,
-            ));
-            for l in &replace[replace.len() - fold..] {
-                right_rows.push((l.clone(), Color::Green, false));
-            }
-        }
-
-        right_rows.push((">>>>>>> REPLACE".to_string(), Color::Magenta, true));
-
+        let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk);
         // ── read file and find match for left panel ───────────
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
@@ -473,6 +590,17 @@ impl Repl {
         let start_y = 2;
         let visible_height = ra_height.saturating_sub(start_y);
         let max_scroll = right_rows.len().saturating_sub(visible_height);
+        if self.merge_scroll > max_scroll {
+            self.merge_scroll = max_scroll;
+        }
+
+        if !self.merge_left_active {
+            if self.merge_right_cursor < self.merge_scroll {
+                self.merge_scroll = self.merge_right_cursor;
+            } else if self.merge_right_cursor >= self.merge_scroll + visible_height {
+                self.merge_scroll = self.merge_right_cursor + 1 - visible_height;
+            }
+        }
         if self.merge_scroll > max_scroll {
             self.merge_scroll = max_scroll;
         }
@@ -505,13 +633,14 @@ impl Repl {
                 let line = &file_lines[f_idx];
                 let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
                 let is_cursor = f_idx == cursor_line;
-                
+
                 let line_num = f_idx + 1;
                 let cursor_mark = if is_cursor { ">" } else { " " };
                 let line_num_str = format!("{:>4}{}", line_num, cursor_mark);
                 let disp = trunc(line, left_panel_content_w);
-                let pad = left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                
+                let pad =
+                    left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
                 } else if is_in_match {
@@ -554,14 +683,29 @@ impl Repl {
                 let (text, color, is_marker) = &right_rows[idx];
                 let disp = trunc(text, target_right_w);
                 let pad = target_right_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                let bg = if *is_marker { Color::DarkGrey } else { Color::Black };
-
+                let is_right_cursor = !self.merge_left_active && idx == self.merge_right_cursor;
+                let bg = if is_right_cursor {
+                    Color::Cyan
+                } else if *is_marker {
+                    Color::DarkGrey
+                } else {
+                    Color::Black
+                };
+                let fg = if is_right_cursor {
+                    Color::Black
+                } else {
+                    *color
+                };
                 queue!(
                     stdout,
                     cursor::MoveTo((split_x + 1) as u16, y),
+                    if *is_marker || is_right_cursor {
+                        SetAttribute(Attribute::Bold)
+                    } else {
+                        SetAttribute(Attribute::Reset)
+                    },
                     SetBackgroundColor(bg),
-                    SetForegroundColor(*color),
-                    if *is_marker { SetAttribute(Attribute::Bold) } else { SetAttribute(Attribute::Reset) },
+                    SetForegroundColor(fg),
                     Print(format!(" {}{}", disp, " ".repeat(pad))),
                     style::ResetColor,
                     SetAttribute(Attribute::Reset)

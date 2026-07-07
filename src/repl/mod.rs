@@ -109,6 +109,8 @@ pub struct Repl {
     pub(crate) merge_match_end: usize,
     pub(crate) merge_cursor: usize,
     pub(crate) merge_left_active: bool,
+    pub(crate) merge_right_cursor: usize,
+    pub(crate) merge_search_query: Option<String>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -168,6 +170,8 @@ impl Repl {
             merge_match_end: 0,
             merge_cursor: 0,
             merge_left_active: true,
+            merge_right_cursor: 0,
+            merge_search_query: None,
         }
     }
 
