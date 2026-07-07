@@ -31,6 +31,9 @@ fn push_undo(filename: &str, content: &str) {
 fn pop_undo(filename: &str) -> Option<String> {
     MERGE_UNDO_STACK.with(|s| s.borrow_mut().get_mut(filename).and_then(|v| v.pop()))
 }
+fn undo_stack_len(filename: &str) -> usize {
+    MERGE_UNDO_STACK.with(|s| s.borrow().get(filename).map(|v| v.len()).unwrap_or(0))
+}
 
 #[derive(Clone)]
 pub(crate) enum DiffRow {
@@ -247,7 +250,7 @@ impl Repl {
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         self.push_info(
-            "  🔀 Entering Merge Mode. [a]pply [r]eject  ma/mA set  [q]uit",
+            "  🔀 Entering Merge Mode. [a]pply [r]eject [R]ecalc  ma/mA set  [q]uit",
             LineStyle::Info,
         );
     }
@@ -379,6 +382,7 @@ impl Repl {
                 } else {
                     if let Ok(file_content) = std::fs::read_to_string(&file_path) {
                         push_undo(&hunk.filename, &file_content);
+                        self.merge_last_modified = Some(hunk.filename.clone());
                     }
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
@@ -397,9 +401,16 @@ impl Repl {
                     self.next_merge();
                 }
             }
-            KeyCode::Char('r') | KeyCode::Char('R') => {
+            KeyCode::Char('r') => {
                 self.push_info("  🚫 Rejected hunk.", LineStyle::Error);
                 self.next_merge();
+            }
+            KeyCode::Char('R') => {
+                self.calc_merge_file_scroll();
+                self.push_info(
+                    "  🔄 Recalculated best-match block from scratch.",
+                    LineStyle::Info,
+                );
             }
             // KeyCode::Char('n') | KeyCode::Char('N') => {
             // self.next_merge();
@@ -579,11 +590,9 @@ impl Repl {
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
                 let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
-
                 push_undo(&hunk.filename, &file_content);
-
+                self.merge_last_modified = Some(hunk.filename.clone());
                 let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
-
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
                 std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
@@ -606,7 +615,7 @@ impl Repl {
 
                 if !file_lines.is_empty() {
                     push_undo(&hunk.filename, &file_content);
-
+                    self.merge_last_modified = Some(hunk.filename.clone());
                     let line_idx = self.merge_cursor.min(file_lines.len() - 1);
                     file_lines.remove(line_idx);
                     std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
@@ -624,16 +633,25 @@ impl Repl {
                 }
             }
             KeyCode::Char('u') => {
-                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                let hunk_filename =
+                    self.pending_merge.as_ref().unwrap()[self.merge_index].filename.clone();
+                let target_file = self.merge_last_modified.clone().unwrap_or(hunk_filename.clone());
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
-                let file_path = project_root.join(&hunk.filename);
-
-                if let Some(undo_content) = pop_undo(&hunk.filename) {
+                let file_path = project_root.join(&target_file);
+                if let Some(undo_content) = pop_undo(&target_file) {
                     std::fs::write(&file_path, &undo_content)?;
-                    self.push_info("  ↩️ Undo successful.", LineStyle::Info);
-                    let old_cursor = self.merge_cursor;
-                    self.calc_merge_file_scroll();
-                    self.merge_cursor = old_cursor;
+                    self.push_info(
+                        format!("  ↩️ Undo successful for {}.", target_file),
+                        LineStyle::Info,
+                    );
+                    if undo_stack_len(&target_file) == 0 {
+                        self.merge_last_modified = None;
+                    }
+                    if hunk_filename == target_file {
+                        let old_cursor = self.merge_cursor;
+                        self.calc_merge_file_scroll();
+                        self.merge_cursor = old_cursor;
+                    }
                 } else {
                     self.push_info("  Nothing to undo.", LineStyle::Error);
                 }
@@ -663,10 +681,8 @@ impl Repl {
                     LineStyle::Info,
                 );
             } else {
-                self.pending_merge = None;
-                self.mode = Mode::Insert;
                 self.push_info(
-                    "  ✅ All hunks processed. Exited Merge Mode.",
+                    "  ✅ All hunks processed. Press 'u' to undo the last change, or 'q' to quit.",
                     LineStyle::Info,
                 );
             }
@@ -801,7 +817,7 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [l]skip [n]goto [q]uit [Tab]panel [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [R]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len(),
                 match_percent
@@ -880,7 +896,7 @@ impl Repl {
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
                 } else if is_in_match {
-                    (Color::Black, Color::Yellow)
+                    (Color::White, Color::Blue)
                 } else {
                     (Color::White, Color::Black)
                 };
