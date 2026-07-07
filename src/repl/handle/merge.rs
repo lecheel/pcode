@@ -124,6 +124,7 @@ impl Repl {
         self.pending_merge = Some(hunks);
         self.merge_index = 0;
         self.merge_scroll = 0;
+        self.merge_left_active = true;
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         let idx = self.llm_buffer_idx();
@@ -183,8 +184,11 @@ impl Repl {
                 self.push_info("  🚫 Rejected hunk.", LineStyle::Error);
                 self.next_merge();
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Tab => {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.next_merge();
+            }
+            KeyCode::Tab => {
+                self.merge_left_active = !self.merge_left_active;
             }
             KeyCode::Char('p') | KeyCode::Char('P') => {
                 if self.merge_index > 0 {
@@ -194,10 +198,34 @@ impl Repl {
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.merge_scroll += 1;
+                if self.merge_left_active {
+                    self.merge_anchor_offset += 1;
+                } else {
+                    self.merge_scroll += 1;
+                }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.merge_scroll = self.merge_scroll.saturating_sub(1);
+                if self.merge_left_active {
+                    self.merge_anchor_offset -= 1;
+                } else {
+                    self.merge_scroll = self.merge_scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('J') | KeyCode::PageDown => {
+                let vis = self.response_area_height().saturating_sub(2);
+                if self.merge_left_active {
+                    self.merge_file_scroll += vis;
+                } else {
+                    self.merge_scroll += vis;
+                }
+            }
+            KeyCode::Char('K') | KeyCode::PageUp => {
+                let vis = self.response_area_height().saturating_sub(2);
+                if self.merge_left_active {
+                    self.merge_file_scroll = self.merge_file_scroll.saturating_sub(vis);
+                } else {
+                    self.merge_scroll = self.merge_scroll.saturating_sub(vis);
+                }
             }
             KeyCode::Char('<') => {
                 self.merge_anchor_offset -= 1;
@@ -242,7 +270,7 @@ impl Repl {
     pub(crate) fn render_merge(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
         let term_width = self.term_width();
-        let split_x = (term_width * 3) / 10; // 3:7 ratio
+        let split_x = (term_width * 7) / 10; // 7:3 ratio (file left, patch right)
 
         let hunks = match &self.pending_merge {
             Some(h) => h,
@@ -279,28 +307,36 @@ impl Repl {
             out
         }
 
-        // ── header row: filename (left) | description (right) ──
-        let fname_disp = trunc(&hunk.filename, left_width.saturating_sub(1));
-        let fname_pad = left_width
-            .saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
+        // ── header row: description (left) | filename (right) ──
+        // ── header row: description (left) | filename (right) ──
         let desc = " detail full content sync the line to left";
-        let desc_disp = trunc(desc, right_width.saturating_sub(1));
-        let desc_pad = right_width
+        let desc_disp = trunc(desc, left_width.saturating_sub(1));
+        let desc_pad = left_width
             .saturating_sub(UnicodeWidthStr::width(desc_disp.as_str()) + 1);
+        let fname_disp = trunc(&hunk.filename, right_width.saturating_sub(1));
+        let fname_pad = right_width
+            .saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
+
+        let left_hdr_bg = if self.merge_left_active { Color::Cyan } else { Color::DarkGrey };
+        let left_hdr_fg = if self.merge_left_active { Color::Black } else { Color::White };
+        let right_hdr_bg = if !self.merge_left_active { Color::Cyan } else { Color::DarkGrey };
+        let right_hdr_fg = if !self.merge_left_active { Color::Black } else { Color::Cyan };
 
         queue!(
             stdout,
             cursor::MoveTo(0, 0),
-            SetBackgroundColor(Color::DarkGrey),
-            SetForegroundColor(Color::Cyan),
+            SetBackgroundColor(left_hdr_bg),
+            SetForegroundColor(left_hdr_fg),
             SetAttribute(Attribute::Bold),
-            Print(format!(" {}{}", fname_disp, " ".repeat(fname_pad))),
+            Print(format!(" {}{}", desc_disp, " ".repeat(desc_pad))),
             cursor::MoveTo(split_x as u16, 0),
+            SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::DarkGrey),
             Print("│"),
             cursor::MoveTo((split_x + 1) as u16, 0),
-            SetForegroundColor(Color::White),
-            Print(format!(" {}{}", desc_disp, " ".repeat(desc_pad))),
+            SetBackgroundColor(right_hdr_bg),
+            SetForegroundColor(right_hdr_fg),
+            Print(format!(" {}{}", fname_disp, " ".repeat(fname_pad))),
             style::ResetColor,
             SetAttribute(Attribute::Reset)
         )?;
@@ -312,61 +348,61 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [J/K]scroll [</>]anchor ",
+                " 🔀 [{}/{}]  [a]pply [r]eject [n]ext [p]rev [q]uit  [Tab]panel [j/k]nav ",
                 self.merge_index + 1,
                 hunks.len()
             )),
             style::ResetColor
         )?;
 
-        // ── build left panel rows (the patch) ──────────────────
+        // ── build right panel rows (the patch) ──────────────────
         let fold = 5usize;
-        let mut left_rows: Vec<(String, Color, bool)> = Vec::new();
-        left_rows.push(("<<<<<<< SEARCH".to_string(), Color::Magenta, true));
+        let mut right_rows: Vec<(String, Color, bool)> = Vec::new();
+        right_rows.push(("<<<<<<< SEARCH".to_string(), Color::Magenta, true));
 
         let search = &hunk.search;
         if search.len() <= fold * 2 {
             for l in search {
-                left_rows.push((l.clone(), Color::Red, false));
+                right_rows.push((l.clone(), Color::Red, false));
             }
         } else {
             for l in &search[..fold] {
-                left_rows.push((l.clone(), Color::Red, false));
+                right_rows.push((l.clone(), Color::Red, false));
             }
-            left_rows.push((
+            right_rows.push((
                 format!("... placeholder ({}) ...", search.len() - fold * 2),
                 Color::DarkGrey,
                 false,
             ));
             for l in &search[search.len() - fold..] {
-                left_rows.push((l.clone(), Color::Red, false));
+                right_rows.push((l.clone(), Color::Red, false));
             }
         }
 
-        left_rows.push(("=======".to_string(), Color::Magenta, true));
+        right_rows.push(("=======".to_string(), Color::Magenta, true));
 
         let replace = &hunk.replace;
         if replace.len() <= fold * 2 {
             for l in replace {
-                left_rows.push((l.clone(), Color::Green, false));
+                right_rows.push((l.clone(), Color::Green, false));
             }
         } else {
             for l in &replace[..fold] {
-                left_rows.push((l.clone(), Color::Green, false));
+                right_rows.push((l.clone(), Color::Green, false));
             }
-            left_rows.push((
+            right_rows.push((
                 format!("... placeholder ({}) ...", replace.len() - fold * 2),
                 Color::DarkGrey,
                 false,
             ));
             for l in &replace[replace.len() - fold..] {
-                left_rows.push((l.clone(), Color::Green, false));
+                right_rows.push((l.clone(), Color::Green, false));
             }
         }
 
-        left_rows.push((">>>>>>> REPLACE".to_string(), Color::Magenta, true));
+        right_rows.push((">>>>>>> REPLACE".to_string(), Color::Magenta, true));
 
-        // ── read file and find match for right panel ───────────
+        // ── read file and find match for left panel ───────────
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
         let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
@@ -375,10 +411,10 @@ impl Repl {
         let actual_match_idx = (self.merge_match_idx as i32 + self.merge_anchor_offset).max(0) as usize;
         let matched_end = actual_match_idx + hunk.search.len();
 
-        // ── render left panel with scroll ──────────────────────
+        // ── calculate scroll limits ────────────────────────────
         let start_y = 2;
         let visible_height = ra_height.saturating_sub(start_y);
-        let max_scroll = left_rows.len().saturating_sub(visible_height);
+        let max_scroll = right_rows.len().saturating_sub(visible_height);
         if self.merge_scroll > max_scroll {
             self.merge_scroll = max_scroll;
         }
@@ -388,29 +424,49 @@ impl Repl {
             self.merge_file_scroll = max_file_scroll;
         }
 
-        let target_left_w = left_width.saturating_sub(2);
-        let right_panel_content_w = right_width.saturating_sub(6); // 4 for line num, 2 for padding
+        // Auto-scroll left panel if the anchor (cursor) moves out of view
+        if actual_match_idx < self.merge_file_scroll {
+            self.merge_file_scroll = actual_match_idx.saturating_sub(2);
+        } else if actual_match_idx >= self.merge_file_scroll + visible_height {
+            self.merge_file_scroll = actual_match_idx + 1 - visible_height;
+        }
+        if self.merge_file_scroll > max_file_scroll {
+            self.merge_file_scroll = max_file_scroll;
+        }
+
+        let left_panel_content_w = left_width.saturating_sub(6); // 4 for line num, 2 for padding
+        let target_right_w = right_width.saturating_sub(2);
 
         for i in 0..visible_height {
-            let idx = self.merge_scroll + i;
             let y = (start_y + i) as u16;
 
-            // Left panel
-            if idx < left_rows.len() {
-                let (text, color, is_marker) = &left_rows[idx];
-                let disp = trunc(text, target_left_w);
-                let pad = target_left_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                let bg = if *is_marker { Color::DarkGrey } else { Color::Black };
+            // Left panel (File Content)
+            let f_idx = self.merge_file_scroll + i;
+            if f_idx < file_lines.len() {
+                let line = &file_lines[f_idx];
+                let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
+                
+                let line_num = f_idx + 1;
+                let line_num_str = format!("{:>4} ", line_num);
+
+                let disp = trunc(line, left_panel_content_w);
+                let pad = left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                
+                let (fg, bg) = if is_in_match {
+                    (Color::Black, Color::Yellow)
+                } else {
+                    (Color::White, Color::Black)
+                };
 
                 queue!(
                     stdout,
                     cursor::MoveTo(0, y),
                     SetBackgroundColor(bg),
-                    SetForegroundColor(*color),
-                    if *is_marker { SetAttribute(Attribute::Bold) } else { SetAttribute(Attribute::Reset) },
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(&line_num_str),
+                    SetForegroundColor(fg),
                     Print(format!(" {}{}", disp, " ".repeat(pad))),
-                    style::ResetColor,
-                    SetAttribute(Attribute::Reset)
+                    style::ResetColor
                 )?;
             } else {
                 queue!(
@@ -430,33 +486,23 @@ impl Repl {
                 style::ResetColor
             )?;
 
-            // Right panel
-            let f_idx = self.merge_file_scroll + i;
-            if f_idx < file_lines.len() {
-                let line = &file_lines[f_idx];
-                let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
-                
-                let line_num = f_idx + 1;
-                let line_num_str = format!("{:>4} ", line_num);
-
-                let disp = trunc(line, right_panel_content_w);
-                let pad = right_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                
-                let (fg, bg) = if is_in_match {
-                    (Color::Black, Color::Yellow)
-                } else {
-                    (Color::White, Color::Black)
-                };
+            // Right panel (Patch)
+            let idx = self.merge_scroll + i;
+            if idx < right_rows.len() {
+                let (text, color, is_marker) = &right_rows[idx];
+                let disp = trunc(text, target_right_w);
+                let pad = target_right_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                let bg = if *is_marker { Color::DarkGrey } else { Color::Black };
 
                 queue!(
                     stdout,
                     cursor::MoveTo((split_x + 1) as u16, y),
                     SetBackgroundColor(bg),
-                    SetForegroundColor(Color::DarkGrey),
-                    Print(&line_num_str),
-                    SetForegroundColor(fg),
+                    SetForegroundColor(*color),
+                    if *is_marker { SetAttribute(Attribute::Bold) } else { SetAttribute(Attribute::Reset) },
                     Print(format!(" {}{}", disp, " ".repeat(pad))),
-                    style::ResetColor
+                    style::ResetColor,
+                    SetAttribute(Attribute::Reset)
                 )?;
             } else {
                 queue!(

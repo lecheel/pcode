@@ -107,6 +107,7 @@ pub struct Repl {
     pub(crate) merge_file_scroll: usize,
     pub(crate) merge_match_idx: usize,
     pub(crate) merge_anchor_offset: i32,
+    pub(crate) merge_left_active: bool,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -164,6 +165,7 @@ impl Repl {
             merge_file_scroll: 0,
             merge_match_idx: 0,
             merge_anchor_offset: 0,
+            merge_left_active: true,
         }
     }
 
