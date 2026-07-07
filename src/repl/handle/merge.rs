@@ -363,7 +363,29 @@ impl Repl {
                 if self.merge_index > 0 {
                     self.merge_index -= 1;
                     self.merge_scroll = 0;
+                    self.merge_right_cursor = 0;
+                    self.merge_search_query = None;
                     self.calc_merge_file_scroll();
+                }
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                let len = self.pending_merge.as_ref().unwrap().len();
+                if len > 1 {
+                    self.merge_index = (self.merge_index + 1) % len;
+                    self.merge_scroll = 0;
+                    self.merge_right_cursor = 0;
+                    self.merge_search_query = None;
+                    self.calc_merge_file_scroll();
+                    self.push_info(
+                        format!(
+                            "  ⏭️ Skipped to hunk [{}/{}] (no change applied).",
+                            self.merge_index + 1,
+                            len
+                        ),
+                        LineStyle::Dim,
+                    );
+                } else {
+                    self.push_info("  ⏭️ Only 1 hunk, nothing to skip to.", LineStyle::Dim);
                 }
             }
             KeyCode::Char('m') => {
@@ -721,7 +743,7 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [q]uit [n]goto [Tab]panel [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [l]skip [n]goto [q]uit [Tab]panel [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len(),
                 match_percent
