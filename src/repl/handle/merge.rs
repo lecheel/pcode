@@ -292,9 +292,9 @@ impl Repl {
                 self.push_info("  🚫 Rejected hunk.", LineStyle::Error);
                 self.next_merge();
             }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.next_merge();
-            }
+            // KeyCode::Char('n') | KeyCode::Char('N') => {
+            // self.next_merge();
+            // }
             KeyCode::Tab => {
                 self.merge_left_active = !self.merge_left_active;
             }
@@ -438,6 +438,73 @@ impl Repl {
                     }
                 }
             }
+            KeyCode::Char('o') => {
+                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                let file_path = project_root.join(&hunk.filename);
+                let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+                
+                let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
+                std::fs::write(&undo_file, &file_content)?;
+
+                let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+
+                let line_idx = (self.merge_cursor + 1).min(file_lines.len());
+                file_lines.insert(line_idx, String::new());
+                std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
+
+                if self.merge_cursor < self.merge_match_idx {
+                    self.merge_match_idx += 1;
+                    self.merge_match_end += 1;
+                } else if self.merge_cursor < self.merge_match_end {
+                    self.merge_match_end += 1;
+                }
+                self.merge_cursor = line_idx;
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::ALT) => {
+                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                let file_path = project_root.join(&hunk.filename);
+                let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+
+                let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+
+                if !file_lines.is_empty() {
+                    let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
+                    std::fs::write(&undo_file, &file_content)?;
+
+                    let line_idx = self.merge_cursor.min(file_lines.len() - 1);
+                    file_lines.remove(line_idx);
+                    std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
+
+                    if self.merge_match_idx > line_idx {
+                        self.merge_match_idx = self.merge_match_idx.saturating_sub(1);
+                        self.merge_match_end = self.merge_match_end.saturating_sub(1);
+                    } else if self.merge_match_end > line_idx {
+                        self.merge_match_end = self.merge_match_end.saturating_sub(1);
+                    }
+                    if self.merge_cursor > 0 {
+                        self.merge_cursor -= 1;
+                    }
+                    self.push_info("  🗑️ Line deleted.", LineStyle::Info);
+                }
+            }
+            KeyCode::Char('u') => {
+                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                let file_path = project_root.join(&hunk.filename);
+                let undo_file = std::env::temp_dir().join(format!("aider_merge_undo_{}", hunk.filename.replace('/', "_")));
+                
+                if undo_file.exists() {
+                    if let Ok(undo_content) = std::fs::read_to_string(&undo_file) {
+                        std::fs::write(&file_path, &undo_content)?;
+                        std::fs::remove_file(&undo_file)?;
+                        self.push_info("  ↩️ Undo successful.", LineStyle::Info);
+                    }
+                } else {
+                    self.push_info("  Nothing to undo.", LineStyle::Error);
+                }
+            }
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.pending_merge = None;
                 self.mode = Mode::Insert;
@@ -448,6 +515,10 @@ impl Repl {
         self.render(stdout)?;
         Ok(())
     }
+
+
+
+
 
     fn next_merge(&mut self) {
         if self.merge_index + 1 < self.pending_merge.as_ref().unwrap().len() {
