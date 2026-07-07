@@ -76,7 +76,38 @@ pub(crate) fn build_diff_rows(search: &[String], replace: &[String]) -> Vec<Diff
     flush(&mut rows, &mut dels, &mut inss);
     rows
 }
-
+/// Compares `search` (hunk search block) against `matched` (the current best-guess
+/// block in the file) and returns a per-`matched`-line gutter char:
+/// '=' equal, '~' modified, '+' extra line only in file, plus equal/total counts
+/// used to compute a match percentage.
+pub(crate) fn build_match_gutter(search: &[String], matched: &[String]) -> (Vec<char>, usize, usize) {
+    let rows = build_diff_rows(search, matched);
+    let mut gutter = Vec::with_capacity(matched.len());
+    let mut equal_count = 0usize;
+    let mut total = 0usize;
+    for row in &rows {
+        match row {
+            DiffRow::Equal(_) => {
+                gutter.push('=');
+                equal_count += 1;
+                total += 1;
+            }
+            DiffRow::Modified(_, _) => {
+                gutter.push('~');
+                total += 1;
+            }
+            DiffRow::Insert(_) => {
+                gutter.push('+');
+                total += 1;
+            }
+            DiffRow::Delete(_) => {
+                // line only in search (missing from file) - no matched line to attach to
+                total += 1;
+            }
+        }
+    }
+    (gutter, equal_count, total)
+}
 pub(crate) fn word_diff(old: &str, new: &str) -> (Vec<(String, bool)>, Vec<(String, bool)>) {
     let diff = TextDiff::from_words(old, new);
     let mut left = Vec::new();
@@ -337,6 +368,11 @@ impl Repl {
             }
             KeyCode::Char('m') => {
                 self.pending = Some('m');
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                // Goto the hunk: recenter left panel & cursor on the current match block
+                self.merge_cursor = self.merge_match_idx;
+                self.merge_file_scroll = self.merge_match_idx.saturating_sub(2);
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.merge_left_active {
@@ -648,20 +684,6 @@ impl Repl {
             SetAttribute(Attribute::Reset)
         )?;
 
-        // ── status row ─────────────────────────────────────────
-        queue!(
-            stdout,
-            cursor::MoveTo(0, 1),
-            SetBackgroundColor(Color::DarkGrey),
-            SetForegroundColor(Color::Yellow),
-            Print(format!(
-                " 🔀 [{}/{}]  [a]pply [r]eject [q]uit  [Tab]panel [ma/mA]set [Enter]search ",
-                self.merge_index + 1,
-                hunks.len()
-            )),
-            style::ResetColor
-        )?;
-
         // ── build right panel rows (the patch) ──────────────────
         let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk);
         // ── read file and find match for left panel ───────────
@@ -679,6 +701,33 @@ impl Repl {
         let actual_match_idx = self.merge_match_idx;
         let matched_end = self.merge_match_end.min(file_lines.len());
         let cursor_line = self.merge_cursor;
+        // ── LCS diff: search block vs the currently matched block in the file ──
+        let matched_lines: Vec<String> = if actual_match_idx < matched_end {
+            file_lines[actual_match_idx..matched_end].to_vec()
+        } else {
+            Vec::new()
+        };
+        let (match_gutter, equal_count, total_cmp) =
+            build_match_gutter(&hunk.search, &matched_lines);
+        let match_percent = if total_cmp > 0 {
+            (equal_count * 100) / total_cmp
+        } else {
+            100
+        };
+        // ── status row ─────────────────────────────────────────
+        queue!(
+            stdout,
+            cursor::MoveTo(0, 1),
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            Print(format!(
+                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [q]uit [n]goto [Tab]panel [ma/mA]set [Enter]search ",
+                self.merge_index + 1,
+                hunks.len(),
+                match_percent
+            )),
+            style::ResetColor
+        )?;
 
         // ── calculate scroll limits ────────────────────────────
         let start_y = 2;
@@ -715,7 +764,7 @@ impl Repl {
             self.merge_file_scroll = max_file_scroll;
         }
 
-        let left_panel_content_w = left_width.saturating_sub(6); // 4 for line num, 2 for padding
+        let left_panel_content_w = left_width.saturating_sub(7); // 4 line num, 1 cursor mark, 1 diff gutter, 1 padding
         let target_right_w = right_width.saturating_sub(2);
 
         for i in 0..visible_height {
@@ -727,14 +776,27 @@ impl Repl {
                 let line = &file_lines[f_idx];
                 let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
                 let is_cursor = f_idx == cursor_line;
-
                 let line_num = f_idx + 1;
                 let cursor_mark = if is_cursor { ">" } else { " " };
                 let line_num_str = format!("{:>4}{}", line_num, cursor_mark);
+                let diff_char = if is_in_match {
+                    match_gutter
+                        .get(f_idx - actual_match_idx)
+                        .copied()
+                        .unwrap_or(' ')
+                } else {
+                    ' '
+                };
+                let diff_color = match diff_char {
+                    '=' => Color::DarkGrey,
+                    '~' => Color::Yellow,
+                    '+' => Color::Green,
+                    '-' => Color::Red,
+                    _ => Color::DarkGrey,
+                };
                 let disp = trunc(line, left_panel_content_w);
                 let pad =
                     left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
                 } else if is_in_match {
@@ -742,13 +804,14 @@ impl Repl {
                 } else {
                     (Color::White, Color::Black)
                 };
-
                 queue!(
                     stdout,
                     cursor::MoveTo(0, y),
                     SetBackgroundColor(bg),
                     SetForegroundColor(Color::DarkGrey),
                     Print(&line_num_str),
+                    SetForegroundColor(diff_color),
+                    Print(diff_char),
                     SetForegroundColor(fg),
                     Print(format!(" {}{}", disp, " ".repeat(pad))),
                     style::ResetColor
