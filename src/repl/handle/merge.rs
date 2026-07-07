@@ -258,7 +258,11 @@ impl Repl {
         let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
-        let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+            self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
+        } else {
+            std::fs::read_to_string(&file_path).unwrap_or_default()
+        };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
         let search = &hunk.search;
@@ -338,9 +342,13 @@ impl Repl {
 
                 if self.merge_buffer_apply {
                     let temp_path = file_path.with_extension("codex_eyes_mergetmp");
-                    if let Ok(file_content) = std::fs::read_to_string(&file_path) {
-                        let _ = std::fs::write(&temp_path, &file_content);
-                    }
+                    let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                        self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
+                    } else {
+                        std::fs::read_to_string(&file_path).unwrap_or_default()
+                    };
+                    let _ = std::fs::write(&temp_path, &file_content);
+                    
                     let temp_filename = temp_path.to_string_lossy().to_string();
                     let patch_text = format!(
                         "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
@@ -361,9 +369,8 @@ impl Repl {
                                 self.buffers[buf_idx].clear();
                                 self.buffers[buf_idx].push_str(&modified_content, LineStyle::Plain);
                                 self.modified_buffers.insert(hunk.filename.clone());
-                                self.mode = Mode::Normal;
-                                self.pending_merge = None;
                                 self.push_info("  ✅ Applied to buffer. Press Alt-w to save.", LineStyle::ToolResult);
+                                self.next_merge();
                             }
                         }
                         Err(e) => {
@@ -751,10 +758,13 @@ impl Repl {
 
         // ── build right panel rows (the patch) ──────────────────
         let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk);
-        // ── read file and find match for left panel ───────────
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
-        let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+        let file_content = if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+            self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n")
+        } else {
+            std::fs::read_to_string(&file_path).unwrap_or_default()
+        };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
 
         if self.merge_match_end <= self.merge_match_idx {
