@@ -719,13 +719,7 @@ impl Repl {
             buffer_name.to_string()
         };
         let modified_indicator = if self.modified_buffers.contains(buffer_name) { "[+] " } else { "" };
-        let buffer_info = format!(
-            "[{}/{}] {}{}",
-            self.active_buffer + 1,
-            self.buffers.len(),
-            modified_indicator,
-            truncated_name
-        );
+        let buffer_prefix = format!("[{}/{}] ", self.active_buffer + 1, self.buffers.len());
         let git_info = if self.cached_git_info.is_empty() {
             String::new()
         } else {
@@ -755,7 +749,11 @@ impl Repl {
             };
             segments.push((format!(" {} ", self.spinner_char), Color::Yellow));
             segments.push((mode_str.to_string(), mode_color));
-            segments.push((format!(" {} ", buffer_info), Color::Cyan));
+            segments.push((format!(" {} ", buffer_prefix), Color::Cyan));
+            if !modified_indicator.is_empty() {
+                segments.push((modified_indicator.to_string(), Color::Red));
+            }
+            segments.push((format!("{} ", truncated_name), Color::Cyan));
             segments.push((format!(" ⏳ {:.1}s", elapsed), Color::Yellow));
             segments.push((" │ ".to_string(), Color::Grey));
             segments.push((detail, Color::Yellow));
@@ -770,7 +768,11 @@ impl Repl {
             }
         } else {
             segments.push((format!(" {} ", mode_str), mode_color));
-            segments.push((buffer_info, Color::Cyan));
+            segments.push((buffer_prefix.clone(), Color::Cyan));
+            if !modified_indicator.is_empty() {
+                segments.push((modified_indicator.to_string(), Color::Red));
+            }
+            segments.push((truncated_name.to_string(), Color::Cyan));
             segments.push((" │ ".to_string(), Color::Grey));
             segments.push((skill_str.clone(), Color::Green));
 

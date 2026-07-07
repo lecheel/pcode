@@ -658,6 +658,13 @@ impl Repl {
                             format!("  ↩️ Undo successful for {} (buffer).", target_file),
                             LineStyle::Info,
                         );
+                        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                        let file_path = project_root.join(&target_file);
+                        let disk_content = std::fs::read_to_string(&file_path).unwrap_or_default();
+                        let buf_content = self.buffers[buf_idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n");
+                        if buf_content == disk_content {
+                            self.modified_buffers.remove(&target_file);
+                        }
                     } else {
                         let project_root =
                             std::path::PathBuf::from(&self.config.tools.project_root);
@@ -667,6 +674,12 @@ impl Repl {
                             format!("  ↩️ Undo successful for {} (disk).", target_file),
                             LineStyle::Info,
                         );
+                        if let Some(idx) = self.buffers.iter().position(|b| b.name() == target_file) {
+                            let buf_content = self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<String>>().join("\n");
+                            if buf_content == undo_content {
+                                self.modified_buffers.remove(&target_file);
+                            }
+                        }
                     }
                     if undo_stack_len(&target_file) == 0 {
                         self.merge_last_modified = None;
@@ -834,6 +847,11 @@ impl Repl {
         } else {
             100
         };
+        let match_label = if equal_count == 0 {
+            "match:none (ghost anchor — R recalc, ma/mA set)".to_string()
+        } else {
+            format!("match:{}%", match_percent)
+        };
         // ── status row ─────────────────────────────────────────
         queue!(
             stdout,
@@ -841,10 +859,10 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] match:{}%  [a]pply [r]eject [R]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
+                " 🔀 [{}/{}] {}  [a]pply [r]eject [R]ecalc [l]skip [n]goto [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search ",
                 self.merge_index + 1,
                 hunks.len(),
-                match_percent
+                match_label
             )),
             style::ResetColor
         )?;
@@ -894,10 +912,19 @@ impl Repl {
             let f_idx = self.merge_file_scroll + i;
             if f_idx < file_lines.len() {
                 let line = &file_lines[f_idx];
-                let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
+                let has_confident_match = equal_count > 0;
+                let is_in_match =
+                    has_confident_match && f_idx >= actual_match_idx && f_idx < matched_end;
                 let is_cursor = f_idx == cursor_line;
+                let is_ghost_anchor = !has_confident_match && f_idx == actual_match_idx;
                 let line_num = f_idx + 1;
-                let cursor_mark = if is_cursor { ">" } else { " " };
+                let cursor_mark = if is_cursor {
+                    ">"
+                } else if is_ghost_anchor {
+                    "?"
+                } else {
+                    " "
+                };
                 let line_num_str = format!("{:>4}{}", line_num, cursor_mark);
                 let diff_char = if is_in_match {
                     match_gutter
@@ -921,6 +948,8 @@ impl Repl {
                     (Color::Black, Color::Cyan)
                 } else if is_in_match {
                     (Color::White, Color::Blue)
+                } else if is_ghost_anchor {
+                    (Color::DarkGrey, Color::Black)
                 } else {
                     (Color::White, Color::Black)
                 };
