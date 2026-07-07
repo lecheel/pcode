@@ -253,7 +253,6 @@ impl Repl {
                             } else {
                                 LineStyle::Plain
                             };
-
                             let prefix = if line.starts_with("+") || line.starts_with("-") {
                                 ""
                             } else {
@@ -268,8 +267,8 @@ impl Repl {
                             LineStyle::Error,
                         ));
                     }
-
-                    self.scroll_to_bottom();
+                    self.buffers[new_buf_idx].move_top();
+                    self.ensure_cursor_visible();
                     self.render(stdout)?;
                     return Ok(());
                 }

@@ -313,13 +313,12 @@ impl Repl {
             } else {
                 self.active_buffer -= 1;
             }
-            self.scroll_to_bottom();
+            self.ensure_cursor_visible();
         } else {
             self.push_info("  Only 1 buffer", LineStyle::Dim);
             self.scroll_to_bottom();
         }
     }
-
     pub(crate) fn close_buffer(&mut self) {
         if self.buffers.len() <= 1 {
             self.buffer_mut().clear();
@@ -330,7 +329,6 @@ impl Repl {
             self.scroll_to_bottom();
             return;
         }
-
         let closed_idx = self.active_buffer;
         if self.llm_buffer_idx == Some(closed_idx) || self.console_buffer_idx == Some(closed_idx) {
             self.buffers[closed_idx].clear();
@@ -344,23 +342,23 @@ impl Repl {
         let closed_name = self.buffers[closed_idx].name().to_string();
         self.modified_buffers.remove(&closed_name);
         self.buffers.remove(closed_idx);
-
         if let Some(idx) = self.llm_buffer_idx.as_mut() {
             if *idx > closed_idx {
                 *idx -= 1;
             }
         }
-
         if let Some(idx) = self.console_buffer_idx.as_mut() {
             if *idx > closed_idx {
                 *idx -= 1;
             }
         }
-
         if self.active_buffer >= self.buffers.len() {
             self.active_buffer = self.buffers.len() - 1;
         }
-        self.scroll_to_bottom();
+        if self.console_buffer_idx == Some(self.active_buffer) && self.buffers.len() > 1 {
+            self.active_buffer = (self.active_buffer - 1) % self.buffers.len();
+        }
+        self.ensure_cursor_visible();
     }
 
     // ── geometry / agent helpers ──────────────────────────────────

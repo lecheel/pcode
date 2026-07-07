@@ -43,7 +43,7 @@ impl Repl {
                                 if let Some(idx) = item.id {
                                     if idx < self.buffers.len() {
                                         self.active_buffer = idx;
-                                        self.scroll_to_bottom();
+                                        self.ensure_cursor_visible();
                                     }
                                 }
                             }
@@ -349,15 +349,14 @@ impl Repl {
                 let new_buf_idx = self.buffers.len();
                 self.buffers.push(ResponseBuffer::with_name(path));
                 self.active_buffer = new_buf_idx;
-
                 let c_idx = self.console_buffer_idx();
                 self.buffers[c_idx].push(BufferLine::new(
                     format!("  📄 Opened: {}", path),
                     LineStyle::Info,
                 ));
-
                 self.buffer_mut().push_str(&content, LineStyle::Plain);
-                self.scroll_to_bottom();
+                self.buffer_mut().move_top();
+                self.ensure_cursor_visible();
             }
             Err(e) => {
                 self.push_command_info(
