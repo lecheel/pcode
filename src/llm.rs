@@ -254,10 +254,16 @@ impl LLMClient {
         let mut payload = json!({
             "model": self.model,
             "messages": messages,
-            "tools": tools,
             "stream": false,
         });
-        payload["options"] = json!({ "num_ctx": self.num_ctx });
+
+        if !tools.is_empty() {
+            payload["tools"] = json!(tools);
+        }
+
+        if self.api_type == "ollama" {
+            payload["options"] = json!({ "num_ctx": self.num_ctx });
+        }
         debug::separator("LLM REQUEST");
         let url = if self.base_url.ends_with("/v1") || self.base_url.ends_with("/v1/") {
             format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
@@ -306,7 +312,11 @@ impl LLMClient {
             }
         }
         debug::separator("");
-        let mut request = self.client.post(&url).json(&payload);
+        let mut request = self
+            .client
+            .post(&url)
+            .header("Accept", "application/json")
+            .json(&payload);
         if let Some(ref key) = self.api_key {
             request = request.bearer_auth(key);
         }
