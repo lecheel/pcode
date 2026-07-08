@@ -171,7 +171,7 @@ fn render_spans(
 }
 
 impl Repl {
-    fn build_right_rows(hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
+    fn build_right_rows(hunk: &PatchHunk, applied: bool) -> Vec<(String, Color, bool)> {
         let fold = 10usize;
         let mut right_rows: Vec<(String, Color, bool)> = Vec::new();
         right_rows.push(("<<<<<<< SEARCH".to_string(), Color::Magenta, true));
@@ -212,11 +212,22 @@ impl Repl {
                 right_rows.push((l.clone(), Color::Green, false));
             }
         }
-        right_rows.push((">>>>>>> REPLACE".to_string(), Color::Magenta, true));
+        let end_marker = if applied {
+            ">>>>>>> APPLIED".to_string()
+        } else {
+            ">>>>>>> REPLACE".to_string()
+        };
+        let end_color = if applied {
+            Color::Red
+        } else {
+            Color::Magenta
+        };
+        right_rows.push((end_marker, end_color, true));
         right_rows
     }
     fn get_right_rows(&self, hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
-        Self::build_right_rows(hunk)
+        let applied = self.merge_last_modified.as_ref().map_or(false, |(f, _)| f == &hunk.filename);
+        Self::build_right_rows(hunk, applied)
     }
 
     fn calc_right_rows_len(hunk: &PatchHunk) -> usize {
@@ -250,6 +261,7 @@ impl Repl {
         self.merge_left_active = true;
         self.merge_right_cursor = 0;
         self.merge_search_query = None;
+        self.merge_last_modified = None;
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         self.push_info(
@@ -418,6 +430,8 @@ impl Repl {
                             }
                         }
                         Err(e) => {
+                            let _ = pop_undo(&hunk.filename);
+                            self.merge_last_modified = None;
                             self.push_info(
                                 format!("  ❌ Merge to buffer failed: {}", e),
                                 LineStyle::Error,
@@ -443,6 +457,8 @@ impl Repl {
                     ) {
                         Ok(msg) => self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult),
                         Err(e) => {
+                            let _ = pop_undo(&hunk.filename);
+                            self.merge_last_modified = None;
                             self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error)
                         }
                     }
@@ -467,6 +483,7 @@ impl Repl {
                     self.merge_scroll = 0;
                     self.merge_right_cursor = 0;
                     self.merge_search_query = None;
+                    self.merge_last_modified = None;
                     self.calc_merge_file_scroll();
                 }
             }
@@ -477,6 +494,7 @@ impl Repl {
                     self.merge_scroll = 0;
                     self.merge_right_cursor = 0;
                     self.merge_search_query = None;
+                    self.merge_last_modified = None;
                     self.calc_merge_file_scroll();
                     self.push_info(
                         format!(
@@ -869,7 +887,8 @@ impl Repl {
         )?;
 
         // ── build right panel rows (the patch) ──────────────────
-        let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk);
+        let is_applied = self.merge_last_modified.as_ref().map_or(false, |(f, _)| f == &hunk.filename);
+        let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk, is_applied);
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
         let file_content =
@@ -1053,13 +1072,15 @@ impl Repl {
                 let is_right_cursor = !self.merge_left_active && idx == self.merge_right_cursor;
                 let bg = if is_right_cursor {
                     Color::Cyan
-                } else if *is_marker {
+                } else if *is_marker && !is_applied {
                     Color::DarkGrey
                 } else {
                     Color::Black
                 };
                 let fg = if is_right_cursor {
                     Color::Black
+                } else if is_applied && !*is_marker {
+                    Color::DarkGrey
                 } else {
                     *color
                 };
