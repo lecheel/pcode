@@ -22,11 +22,14 @@ pub struct PatchHunk {
 
 pub fn parse_patches(content: &str) -> Vec<PatchHunk> {
     let trimmed = content.trim();
+    if trimmed.contains("<patch>") || trimmed.contains("<<<<<<< SEARCH") {
+        let hunks = parse_aider_patches(content);
+        if !hunks.is_empty() {
+            return hunks;
+        }
+    }
     if trimmed.contains("// === SKELETON MODE") || trimmed.contains("//--+ file:///") {
         return parse_skeleton_patches(content);
-    }
-    if trimmed.contains("<patch>") || trimmed.contains("<<<<<<< SEARCH") {
-        return parse_aider_patches(content);
     }
     if trimmed.contains("diff --git") || trimmed.contains("--- ") || trimmed.contains("+++ ") {
         let hunks = parse_git_or_unified_patches(content);
@@ -99,6 +102,9 @@ fn parse_aider_patches(content: &str) -> Vec<PatchHunk> {
         } else {
             if state == 0 {
                 let trimmed = line.trim();
+                if trimmed.starts_with("// === SKELETON MODE") || trimmed.starts_with("//--+ file:///") {
+                    continue;
+                }
                 let mut found_fn = None;
                 if let Some(start_idx) = trimmed.find('`') {
                     if let Some(end_idx) = trimmed[start_idx + 1..].find('`') {
