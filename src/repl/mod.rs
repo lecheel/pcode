@@ -118,6 +118,7 @@ pub struct Repl {
     pub(crate) glog_commits: Vec<String>,
     pub(crate) glog_left_cursor: usize,
     pub(crate) glog_right_scroll: usize,
+    pub(crate) glog_right_cursor: usize,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -186,6 +187,7 @@ impl Repl {
             glog_commits: Vec::new(),
             glog_left_cursor: 0,
             glog_right_scroll: 0,
+            glog_right_cursor: 0,
         }
     }
 
@@ -1089,10 +1091,21 @@ impl Repl {
             if let Ok(out) = output {
                 let s = String::from_utf8_lossy(&out.stdout);
                 let lines: Vec<&str> = s.lines().collect();
-
                 let max_scroll = lines.len().saturating_sub(visible_height);
                 if self.glog_right_scroll > max_scroll {
                     self.glog_right_scroll = max_scroll;
+                }
+                if !lines.is_empty() {
+                    if self.glog_right_cursor >= lines.len() {
+                        self.glog_right_cursor = lines.len() - 1;
+                    }
+                    if self.glog_right_cursor < self.glog_right_scroll {
+                        self.glog_right_scroll = self.glog_right_cursor;
+                    } else if self.glog_right_cursor >= self.glog_right_scroll + visible_height {
+                        self.glog_right_scroll = self.glog_right_cursor + 1 - visible_height;
+                    }
+                } else {
+                    self.glog_right_cursor = 0;
                 }
 
                 for i in 0..visible_height {
@@ -1111,7 +1124,6 @@ impl Repl {
                         } else {
                             Color::White
                         };
-
                         let max_diff_w = right_width.saturating_sub(1);
                         let disp = if UnicodeWidthStr::width(line) > max_diff_w {
                             let mut s = String::new();
@@ -1130,14 +1142,17 @@ impl Repl {
                             line.to_string()
                         };
                         let pad = max_diff_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-
+                        let is_cursor = !self.glog_left_active && idx == self.glog_right_cursor;
+                        let bg = if is_cursor { Color::DarkGrey } else { Color::Black };
                         queue!(
                             stdout,
                             cursor::MoveTo((split_x + 1) as u16, y),
-                            SetBackgroundColor(Color::Black),
+                            if is_cursor { SetAttribute(Attribute::Bold) } else { SetAttribute(Attribute::Reset) },
+                            SetBackgroundColor(bg),
                             SetForegroundColor(color),
                             Print(format!(" {}{}", disp, " ".repeat(pad))),
-                            style::ResetColor
+                            style::ResetColor,
+                            SetAttribute(Attribute::Reset)
                         )?;
                     } else {
                         queue!(

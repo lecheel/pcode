@@ -363,9 +363,10 @@ impl Repl {
                     if self.glog_left_cursor < self.glog_commits.len().saturating_sub(1) {
                         self.glog_left_cursor += 1;
                         self.glog_right_scroll = 0;
+                        self.glog_right_cursor = 0;
                     }
                 } else {
-                    self.glog_right_scroll += 1;
+                    self.glog_right_cursor += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -373,9 +374,10 @@ impl Repl {
                     if self.glog_left_cursor > 0 {
                         self.glog_left_cursor -= 1;
                         self.glog_right_scroll = 0;
+                        self.glog_right_cursor = 0;
                     }
                 } else {
-                    self.glog_right_scroll = self.glog_right_scroll.saturating_sub(1);
+                    self.glog_right_cursor = self.glog_right_cursor.saturating_sub(1);
                 }
             }
             KeyCode::PageDown => {
@@ -384,8 +386,9 @@ impl Repl {
                     self.glog_left_cursor = (self.glog_left_cursor + vis)
                         .min(self.glog_commits.len().saturating_sub(1));
                     self.glog_right_scroll = 0;
+                    self.glog_right_cursor = 0;
                 } else {
-                    self.glog_right_scroll += vis;
+                    self.glog_right_cursor += vis;
                 }
             }
             KeyCode::PageUp => {
@@ -393,8 +396,9 @@ impl Repl {
                 if self.glog_left_active {
                     self.glog_left_cursor = self.glog_left_cursor.saturating_sub(vis);
                     self.glog_right_scroll = 0;
+                    self.glog_right_cursor = 0;
                 } else {
-                    self.glog_right_scroll = self.glog_right_scroll.saturating_sub(vis);
+                    self.glog_right_cursor = self.glog_right_cursor.saturating_sub(vis);
                 }
             }
             _ => {}
