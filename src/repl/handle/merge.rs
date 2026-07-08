@@ -226,7 +226,7 @@ impl Repl {
         right_rows
     }
     fn get_right_rows(&self, hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
-        let applied = self.merge_last_modified.as_ref().map_or(false, |(f, _)| f == &hunk.filename);
+        let applied = self.merge_applied.get(self.merge_index).copied().unwrap_or(false);
         Self::build_right_rows(hunk, applied)
     }
 
@@ -262,6 +262,10 @@ impl Repl {
         self.merge_right_cursor = 0;
         self.merge_search_query = None;
         self.merge_last_modified = None;
+        self.merge_applied = vec![false; self.pending_merge.as_ref().unwrap().len()];
+        self.merge_last_applied_idx = None;
+        self.merge_candidates = Vec::new();
+        self.merge_candidate_idx = 0;
         self.calc_merge_file_scroll();
         self.mode = Mode::Merge;
         self.push_info(
@@ -286,10 +290,9 @@ impl Repl {
                 std::fs::read_to_string(&file_path).unwrap_or_default()
             };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
-
         let search = &hunk.search;
-        let mut best_match_idx = 0;
-        let mut max_score = 0;
+        
+        let mut candidates: Vec<(usize, usize)> = Vec::new(); 
         if !search.is_empty() && !file_lines.is_empty() {
             for i in 0..=file_lines.len().saturating_sub(search.len()) {
                 let mut score = 0;
@@ -300,15 +303,19 @@ impl Repl {
                         score += 1;
                     }
                 }
-                if score > max_score {
-                    max_score = score;
-                    best_match_idx = i;
-                }
-                if max_score == search.len() {
-                    break;
+                if score > 0 {
+                    candidates.push((i, score));
                 }
             }
         }
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        
+        let best_match_idx = candidates.first().map(|(i, _)| *i).unwrap_or(0);
+        let max_score = candidates.first().map(|(_, s)| *s).unwrap_or(0);
+
+        self.merge_candidates = candidates.into_iter().map(|(i, _)| i).collect();
+        self.merge_candidate_idx = 0;
+
         if max_score == 0 {
             const NO_MATCH_IDX: usize = usize::MAX / 2;
             self.merge_match_idx = NO_MATCH_IDX;
@@ -427,11 +434,15 @@ impl Repl {
                                     "  ✅ Applied to buffer. Press Alt-w to save.",
                                     LineStyle::ToolResult,
                                 );
+                                self.merge_applied[self.merge_index] = true;
+                                self.merge_last_applied_idx = Some(self.merge_index);
                             }
                         }
                         Err(e) => {
                             let _ = pop_undo(&hunk.filename);
                             self.merge_last_modified = None;
+                            self.merge_applied[self.merge_index] = false;
+                            self.merge_last_applied_idx = None;
                             self.push_info(
                                 format!("  ❌ Merge to buffer failed: {}", e),
                                 LineStyle::Error,
@@ -455,10 +466,16 @@ impl Repl {
                         &project_root,
                         &self.config.tools.allow_paths,
                     ) {
-                        Ok(msg) => self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult),
+                        Ok(msg) => {
+                            self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult);
+                            self.merge_applied[self.merge_index] = true;
+                            self.merge_last_applied_idx = Some(self.merge_index);
+                        }
                         Err(e) => {
                             let _ = pop_undo(&hunk.filename);
                             self.merge_last_modified = None;
+                            self.merge_applied[self.merge_index] = false;
+                            self.merge_last_applied_idx = None;
                             self.push_info(format!("  ❌ Merge failed: {}", e), LineStyle::Error)
                         }
                     }
@@ -471,9 +488,23 @@ impl Repl {
                     LineStyle::Info,
                 );
             }
-            // KeyCode::Char('n') | KeyCode::Char('N') => {
-            // self.next_merge();
-            // }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                if self.merge_candidates.is_empty() {
+                    self.push_info("  No candidates found.", LineStyle::Error);
+                } else {
+                    self.merge_candidate_idx = (self.merge_candidate_idx + 1) % self.merge_candidates.len();
+                    let idx = self.merge_candidates[self.merge_candidate_idx];
+                    let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
+                    self.merge_match_idx = idx;
+                    self.merge_match_end = idx + hunk.search.len().max(1);
+                    self.merge_cursor = idx;
+                    self.merge_file_scroll = idx.saturating_sub(2);
+                    self.push_info(
+                        format!("  ➡️ Candidate {}/{}", self.merge_candidate_idx + 1, self.merge_candidates.len()),
+                        LineStyle::Info,
+                    );
+                }
+            }
             KeyCode::Tab => {
                 self.merge_left_active = !self.merge_left_active;
             }
@@ -755,6 +786,11 @@ impl Repl {
                     }
                     if undo_stack_len(&target_file) == 0 {
                         self.merge_last_modified = None;
+                        if let Some(idx) = self.merge_last_applied_idx.take() {
+                            if idx < self.merge_applied.len() {
+                                self.merge_applied[idx] = false;
+                            }
+                        }
                     }
                     if hunk_filename == target_file && !was_buffer {
                         let old_cursor = self.merge_cursor;
@@ -887,7 +923,7 @@ impl Repl {
         )?;
 
         // ── build right panel rows (the patch) ──────────────────
-        let is_applied = self.merge_last_modified.as_ref().map_or(false, |(f, _)| f == &hunk.filename);
+        let is_applied = self.merge_applied.get(self.merge_index).copied().unwrap_or(false);
         let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk, is_applied);
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
@@ -933,6 +969,18 @@ impl Repl {
         } else {
             (format!("match:{}%", match_percent), Color::Yellow)
         };
+        let hunk_summary = if hunks.len() > 1 {
+            let mut s = String::new();
+            for (i, applied) in self.merge_applied.iter().enumerate() {
+                if i > 0 {
+                    s.push(' ');
+                }
+                s.push_str(&format!("{}{}", i + 1, if *applied { "✅" } else { "⏳" }));
+            }
+            format!("[{}] ", s)
+        } else {
+            String::new()
+        };
         let hint_y = self.height.saturating_sub(3) as u16;
         queue!(
             stdout,
@@ -940,14 +988,15 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] ",
+                " 🔀 [{}/{}] {}",
                 self.merge_index + 1,
-                hunks.len()
+                hunks.len(),
+                hunk_summary
             )),
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [a]pply [r]ecalc [l]nextHunk [n]gotoAnchor [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
+            Print("  [a]pply [r]ecalc [l]nextHunk [n]nextCandidate [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
             style::ResetColor
         )?;
         let start_y = 1;
