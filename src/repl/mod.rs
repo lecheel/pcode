@@ -1275,12 +1275,17 @@ impl Repl {
 
             if idx < self.gdiff_rows.len() {
                 let row = &self.gdiff_rows[idx];
+                let is_cursor = idx == self.gdiff_cursor;
                 
                 if let Some(left) = &row.left {
-                    let (fg, _bg) = match row.kind {
-                        crate::diff::RowKind::Equal => (Color::White, Color::Black),
-                        crate::diff::RowKind::Delete => (Color::Red, Color::Black),
-                        crate::diff::RowKind::Insert => (Color::DarkGrey, Color::Black),
+                    let (fg, bg) = if is_cursor {
+                        (Color::Black, Color::Cyan)
+                    } else {
+                        match row.kind {
+                            crate::diff::RowKind::Equal => (Color::White, Color::Black),
+                            crate::diff::RowKind::Delete => (Color::Red, Color::Black),
+                            crate::diff::RowKind::Insert => (Color::DarkGrey, Color::Black),
+                        }
                     };
                     let line_num = row.left_num.unwrap_or(0);
                     let line_num_str = format!("{:>4} ", line_num);
@@ -1290,7 +1295,7 @@ impl Repl {
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
-                        SetBackgroundColor(Color::Black),
+                        SetBackgroundColor(bg),
                         SetForegroundColor(Color::DarkGrey),
                         Print(&line_num_str),
                         SetForegroundColor(fg),
@@ -1301,7 +1306,7 @@ impl Repl {
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
-                        SetBackgroundColor(Color::Black),
+                        SetBackgroundColor(if is_cursor { Color::Cyan } else { Color::Black }),
                         Print(" ".repeat(left_width))
                     )?;
                 }
@@ -1315,10 +1320,14 @@ impl Repl {
                 )?;
 
                 if let Some(right) = &row.right {
-                    let (fg, _bg) = match row.kind {
-                        crate::diff::RowKind::Equal => (Color::White, Color::Black),
-                        crate::diff::RowKind::Insert => (Color::Green, Color::Black),
-                        crate::diff::RowKind::Delete => (Color::DarkGrey, Color::Black),
+                    let (fg, bg) = if is_cursor {
+                        (Color::Black, Color::Cyan)
+                    } else {
+                        match row.kind {
+                            crate::diff::RowKind::Equal => (Color::White, Color::Black),
+                            crate::diff::RowKind::Insert => (Color::Green, Color::Black),
+                            crate::diff::RowKind::Delete => (Color::DarkGrey, Color::Black),
+                        }
                     };
                     let line_num = row.right_num.unwrap_or(0);
                     let line_num_str = format!("{:>4} ", line_num);
@@ -1328,7 +1337,7 @@ impl Repl {
                     queue!(
                         stdout,
                         cursor::MoveTo((split_x + 1) as u16, y),
-                        SetBackgroundColor(Color::Black),
+                        SetBackgroundColor(bg),
                         SetForegroundColor(Color::DarkGrey),
                         Print(&line_num_str),
                         SetForegroundColor(fg),
@@ -1339,7 +1348,7 @@ impl Repl {
                     queue!(
                         stdout,
                         cursor::MoveTo((split_x + 1) as u16, y),
-                        SetBackgroundColor(Color::Black),
+                        SetBackgroundColor(if is_cursor { Color::Cyan } else { Color::Black }),
                         Print(" ".repeat(right_width))
                     )?;
                 }

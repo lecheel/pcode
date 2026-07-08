@@ -363,6 +363,32 @@ impl Repl {
             KeyCode::Char('k') | KeyCode::Up => {
                 self.gdiff_cursor = self.gdiff_cursor.saturating_sub(1);
             }
+            KeyCode::Char('l') => {
+                let mut found = None;
+                for i in (self.gdiff_cursor + 1)..self.gdiff_rows.len() {
+                    if self.gdiff_rows[i].kind != crate::diff::RowKind::Equal {
+                        found = Some(i);
+                        break;
+                    }
+                }
+                if let Some(idx) = found {
+                    self.gdiff_cursor = idx;
+                }
+            }
+            KeyCode::Char('h') => {
+                if self.gdiff_cursor > 0 {
+                    let mut found = None;
+                    for i in (0..self.gdiff_cursor).rev() {
+                        if self.gdiff_rows[i].kind != crate::diff::RowKind::Equal {
+                            found = Some(i);
+                            break;
+                        }
+                    }
+                    if let Some(idx) = found {
+                        self.gdiff_cursor = idx;
+                    }
+                }
+            }
             KeyCode::PageDown | KeyCode::Char(' ') => {
                 let vis = self.response_area_height().saturating_sub(2);
                 self.gdiff_cursor = (self.gdiff_cursor + vis).min(self.gdiff_rows.len().saturating_sub(1));
