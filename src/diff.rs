@@ -284,21 +284,23 @@ pub fn find_best_match(search: &[String], file: &[String], ignore_comments: bool
         } else {
             false
         };
-
         if is_better {
             best_score = score;
             best_matched_count = matched_count;
             best_start = start;
             best_end = actual_end;
             best_raw = raw;
-            all_candidates.push((start, actual_end, score));
         }
+        all_candidates.push((start, actual_end, score));
     }
     let rows = build_rows(&best_raw, 1, best_start + 1);
-    let score = (best_score * 100.0).clamp(0.0, 100.0);
+    let score = best_score.clamp(0.0, 100.0);
     all_candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
     for (s, e, sc) in all_candidates {
+        if sc < 30.0 {
+            continue;
+        }
         let overlaps = candidates.iter().any(|(rs, re, _)| s < *re && e > *rs);
         if !overlaps {
             candidates.push((s, e, sc));
