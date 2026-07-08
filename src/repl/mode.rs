@@ -8,6 +8,7 @@ pub enum Mode {
     VisualLine,
     Merge,
     GitLog,
+    GitDiff,
 }
 impl Mode {
     pub fn as_str(&self) -> &'static str {
@@ -20,6 +21,7 @@ impl Mode {
             Mode::VisualLine => "VISUAL LINE",
             Mode::Merge => "MERGE",
             Mode::GitLog => "GITLOG",
+            Mode::GitDiff => "GITDIFF",
         }
     }
     pub fn status_color(&self) -> crossterm::style::Color {
@@ -32,6 +34,7 @@ impl Mode {
             Mode::VisualLine => crossterm::style::Color::Blue,
             Mode::Merge => crossterm::style::Color::Magenta,
             Mode::GitLog => crossterm::style::Color::Yellow,
+            Mode::GitDiff => crossterm::style::Color::Magenta,
         }
     }
 }

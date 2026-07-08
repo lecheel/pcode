@@ -353,6 +353,116 @@ impl Repl {
         Ok(())
     }
 
+    pub(crate) fn enter_gdiff_mode(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let buffer_name = self.buffer().name();
+        if buffer_name == "Chat"
+            || buffer_name == "Console"
+            || buffer_name == "rg"
+            || buffer_name == "fd"
+            || buffer_name == "GitStatus"
+            || buffer_name.is_empty()
+        {
+            self.push_info("  ❌ Not a file buffer.", LineStyle::Error);
+            self.scroll_to_bottom();
+            self.render(stdout)?;
+            return Ok(());
+        }
+
+        let abs_git_root = match self.get_git_root() {
+            Some(p) => p,
+            None => {
+                self.push_info("  ❌ Not a git repository.", LineStyle::Error);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+        let repo = match git2::Repository::open(&abs_git_root) {
+            Ok(r) => r,
+            Err(_) => {
+                self.push_info("  ❌ Failed to open git repo.", LineStyle::Error);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let raw_path = std::path::Path::new(buffer_name);
+        let abs_file_path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            project_root.join(buffer_name)
+        };
+        let abs_file_path = match abs_file_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                self.push_info("  ❌ File path invalid.", LineStyle::Error);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+        let rel_path = match abs_file_path.strip_prefix(&abs_git_root) {
+            Ok(p) => p,
+            Err(_) => {
+                self.push_info("  ❌ File outside repo.", LineStyle::Error);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+
+        let new_content: String = self
+            .buffer()
+            .lines()
+            .iter()
+            .map(|l| l.content().clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let head_tree = match repo.head() {
+            Ok(h) => match h.peel_to_tree() {
+                Ok(t) => t,
+                Err(_) => {
+                    self.push_info("  ❌ No HEAD tree.", LineStyle::Error);
+                    self.scroll_to_bottom();
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+            },
+            Err(_) => {
+                self.push_info("  ❌ No HEAD found.", LineStyle::Error);
+                self.scroll_to_bottom();
+                self.render(stdout)?;
+                return Ok(());
+            }
+        };
+
+        let old_content = match head_tree.get_path(rel_path) {
+            Ok(entry) => match entry.to_object(&repo).and_then(|o| o.peel_to_blob()) {
+                Ok(blob) => String::from_utf8_lossy(blob.content()).to_string(),
+                Err(_) => String::new(),
+            },
+            Err(_) => String::new(),
+        };
+
+        let old_lines: Vec<String> = old_content.lines().map(String::from).collect();
+        let new_lines: Vec<String> = new_content.lines().map(String::from).collect();
+
+        let raw_diff = crate::diff::lcs_diff(&old_lines, &new_lines, false);
+        let rows = crate::diff::build_rows(&raw_diff, 1, 1);
+
+        self.gdiff_rows = rows;
+        self.gdiff_scroll = 0;
+        self.gdiff_cursor = 0;
+        self.gdiff_left_active = true;
+        self.mode = Mode::GitDiff;
+
+        self.render(stdout)?;
+        Ok(())
+    }
+
     pub(super) fn show_git_hunk_popup(&mut self) {
         if let Some(diff_lines) = self.get_current_hunk_diff() {
             if diff_lines.is_empty() {

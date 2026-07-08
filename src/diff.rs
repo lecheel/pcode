@@ -59,7 +59,7 @@ fn is_comment_line(line: &str) -> bool {
         || trimmed.starts_with("<!--")
 }
 
-fn lcs_diff(
+pub fn lcs_diff(
     left: &[String],
     right: &[String],
     ignore_comments: bool,

@@ -123,6 +123,10 @@ pub struct Repl {
     pub(crate) glog_left_cursor: usize,
     pub(crate) glog_right_scroll: usize,
     pub(crate) glog_right_cursor: usize,
+    pub(crate) gdiff_left_active: bool,
+    pub(crate) gdiff_rows: Vec<crate::diff::DiffRow>,
+    pub(crate) gdiff_scroll: usize,
+    pub(crate) gdiff_cursor: usize,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -196,6 +200,10 @@ impl Repl {
             glog_left_cursor: 0,
             glog_right_scroll: 0,
             glog_right_cursor: 0,
+            gdiff_left_active: true,
+            gdiff_rows: Vec::new(),
+            gdiff_scroll: 0,
+            gdiff_cursor: 0,
         }
     }
 
@@ -454,6 +462,12 @@ impl Repl {
         }
         if self.mode == Mode::GitLog {
             self.render_glog(stdout)?;
+            self.render_spinner_only(stdout)?;
+            stdout.flush()?;
+            return Ok(());
+        }
+        if self.mode == Mode::GitDiff {
+            self.render_gdiff(stdout)?;
             self.render_spinner_only(stdout)?;
             stdout.flush()?;
             return Ok(());
@@ -844,7 +858,7 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog => (" ", &self.editor, 0),
+            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => (" ", &self.editor, 0),
         };
         let input_text = format!("{}{}", prompt, editor.content());
         queue!(
@@ -856,7 +870,7 @@ impl Repl {
             style::ResetColor
         )?;
         match self.mode {
-            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog => {
+            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
@@ -1173,6 +1187,188 @@ impl Repl {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    pub(crate) fn render_gdiff(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let ra_height = self.response_area_height();
+        let term_width = self.term_width();
+        let split_ratio = if self.gdiff_left_active { 6 } else { 4 };
+        let split_x = (term_width * split_ratio) / 10;
+
+        for i in 0..ra_height {
+            queue!(
+                stdout,
+                cursor::MoveTo(0, i as u16),
+                terminal::Clear(ClearType::CurrentLine)
+            )?;
+        }
+
+        let left_width = split_x.saturating_sub(1);
+        let right_width = term_width.saturating_sub(split_x).saturating_sub(1);
+
+        let left_hdr_bg = if self.gdiff_left_active { Color::Cyan } else { Color::DarkGrey };
+        let left_hdr_fg = if self.gdiff_left_active { Color::Black } else { Color::White };
+        let right_hdr_bg = if !self.gdiff_left_active { Color::Cyan } else { Color::DarkGrey };
+        let right_hdr_fg = if !self.gdiff_left_active { Color::Black } else { Color::Cyan };
+
+        let left_title = " Original (HEAD) ";
+        let right_title = " Modified (Buffer) ";
+        
+        let left_pad = left_width.saturating_sub(UnicodeWidthStr::width(left_title));
+        let right_pad = right_width.saturating_sub(UnicodeWidthStr::width(right_title));
+
+        queue!(
+            stdout,
+            cursor::MoveTo(0, 0),
+            SetBackgroundColor(left_hdr_bg),
+            SetForegroundColor(left_hdr_fg),
+            SetAttribute(Attribute::Bold),
+            Print(format!("{}{}", left_title, " ".repeat(left_pad))),
+            cursor::MoveTo(split_x as u16, 0),
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::DarkGrey),
+            Print("│"),
+            cursor::MoveTo((split_x + 1) as u16, 0),
+            SetBackgroundColor(right_hdr_bg),
+            SetForegroundColor(right_hdr_fg),
+            Print(format!("{}{}", right_title, " ".repeat(right_pad))),
+            style::ResetColor,
+            SetAttribute(Attribute::Reset)
+        )?;
+
+        let start_y = 1;
+        let visible_height = ra_height.saturating_sub(start_y);
+
+        let max_scroll = self.gdiff_rows.len().saturating_sub(visible_height);
+        if self.gdiff_scroll > max_scroll {
+            self.gdiff_scroll = max_scroll;
+        }
+        if self.gdiff_cursor < self.gdiff_scroll {
+            self.gdiff_scroll = self.gdiff_cursor;
+        } else if self.gdiff_cursor >= self.gdiff_scroll + visible_height {
+            self.gdiff_scroll = self.gdiff_cursor + 1 - visible_height;
+        }
+
+        fn trunc(s: &str, max_w: usize) -> String {
+            if UnicodeWidthStr::width(s) <= max_w {
+                return s.to_string();
+            }
+            let mut w = 0;
+            let mut out = String::new();
+            for g in s.graphemes(true) {
+                let gw = UnicodeWidthStr::width(g);
+                if w + gw + 3 > max_w {
+                    break;
+                }
+                out.push_str(g);
+                w += gw;
+            }
+            out.push_str("...");
+            out
+        }
+
+        for i in 0..visible_height {
+            let y = (start_y + i) as u16;
+            let idx = self.gdiff_scroll + i;
+
+            if idx < self.gdiff_rows.len() {
+                let row = &self.gdiff_rows[idx];
+                
+                if let Some(left) = &row.left {
+                    let (fg, _bg) = match row.kind {
+                        crate::diff::RowKind::Equal => (Color::White, Color::Black),
+                        crate::diff::RowKind::Delete => (Color::Red, Color::Black),
+                        crate::diff::RowKind::Insert => (Color::DarkGrey, Color::Black),
+                    };
+                    let line_num = row.left_num.unwrap_or(0);
+                    let line_num_str = format!("{:>4} ", line_num);
+                    let disp = trunc(left, left_width.saturating_sub(5));
+                    let pad = left_width.saturating_sub(5).saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                    
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(Color::Black),
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(&line_num_str),
+                        SetForegroundColor(fg),
+                        Print(format!(" {}{}", disp, " ".repeat(pad))),
+                        style::ResetColor
+                    )?;
+                } else {
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(Color::Black),
+                        Print(" ".repeat(left_width))
+                    )?;
+                }
+
+                queue!(
+                    stdout,
+                    cursor::MoveTo(split_x as u16, y),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print("│"),
+                    style::ResetColor
+                )?;
+
+                if let Some(right) = &row.right {
+                    let (fg, _bg) = match row.kind {
+                        crate::diff::RowKind::Equal => (Color::White, Color::Black),
+                        crate::diff::RowKind::Insert => (Color::Green, Color::Black),
+                        crate::diff::RowKind::Delete => (Color::DarkGrey, Color::Black),
+                    };
+                    let line_num = row.right_num.unwrap_or(0);
+                    let line_num_str = format!("{:>4} ", line_num);
+                    let disp = trunc(right, right_width.saturating_sub(5));
+                    let pad = right_width.saturating_sub(5).saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                    
+                    queue!(
+                        stdout,
+                        cursor::MoveTo((split_x + 1) as u16, y),
+                        SetBackgroundColor(Color::Black),
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(&line_num_str),
+                        SetForegroundColor(fg),
+                        Print(format!(" {}{}", disp, " ".repeat(pad))),
+                        style::ResetColor
+                    )?;
+                } else {
+                    queue!(
+                        stdout,
+                        cursor::MoveTo((split_x + 1) as u16, y),
+                        SetBackgroundColor(Color::Black),
+                        Print(" ".repeat(right_width))
+                    )?;
+                }
+            } else {
+                queue!(
+                    stdout,
+                    cursor::MoveTo(0, y),
+                    SetBackgroundColor(Color::Black),
+                    Print(" ".repeat(left_width)),
+                    cursor::MoveTo(split_x as u16, y),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print("│"),
+                    style::ResetColor,
+                    cursor::MoveTo((split_x + 1) as u16, y),
+                    SetBackgroundColor(Color::Black),
+                    Print(" ".repeat(right_width))
+                )?;
+            }
+        }
+
+        let hint_y = self.height.saturating_sub(3) as u16;
+        queue!(
+            stdout,
+            cursor::MoveTo(0, hint_y),
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            Print(" 📊 Git Diff Mode  [Tab] Switch Ratio  [j/k] Move  [q] Quit"),
+            style::ResetColor
+        )?;
 
         Ok(())
     }

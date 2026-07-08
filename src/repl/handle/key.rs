@@ -34,6 +34,7 @@ impl Repl {
                 Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
                 Mode::Merge => self.handle_merge_key(key, stdout)?,
                 Mode::GitLog => self.handle_glog_key(key, stdout)?,
+                Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
             }
             return Ok(());
         }
@@ -174,12 +175,7 @@ impl Repl {
         }
         if key.code == KeyCode::F(7) {
             if !self.waiting {
-                if self.popup.active {
-                    self.popup.hide();
-                } else {
-                    self.show_function_list_popup_legacy();
-                }
-                self.render(stdout)?;
+                self.enter_gdiff_mode(stdout)?;
             }
             return Ok(());
         }
@@ -342,7 +338,42 @@ impl Repl {
             Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
             Mode::Merge => self.handle_merge_key(key, stdout)?,
             Mode::GitLog => self.handle_glog_key(key, stdout)?,
+            Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
         }
+        Ok(())
+    }
+
+    pub(super) fn handle_gdiff_key(
+        &mut self,
+        key: KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<()> {
+        match key.code {
+            KeyCode::Tab => {
+                self.gdiff_left_active = !self.gdiff_left_active;
+            }
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.gdiff_cursor < self.gdiff_rows.len().saturating_sub(1) {
+                    self.gdiff_cursor += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.gdiff_cursor = self.gdiff_cursor.saturating_sub(1);
+            }
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                let vis = self.response_area_height().saturating_sub(2);
+                self.gdiff_cursor = (self.gdiff_cursor + vis).min(self.gdiff_rows.len().saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                let vis = self.response_area_height().saturating_sub(2);
+                self.gdiff_cursor = self.gdiff_cursor.saturating_sub(vis);
+            }
+            _ => {}
+        }
+        self.render(stdout)?;
         Ok(())
     }
 
