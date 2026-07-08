@@ -123,6 +123,7 @@ pub struct Repl {
     pub(crate) glog_left_cursor: usize,
     pub(crate) glog_right_scroll: usize,
     pub(crate) glog_right_cursor: usize,
+    pub(crate) glog_selected_commits: Vec<String>,
     pub(crate) gdiff_left_active: bool,
     pub(crate) gdiff_rows: Vec<crate::diff::DiffRow>,
     pub(crate) gdiff_scroll: usize,
@@ -200,6 +201,7 @@ impl Repl {
             glog_left_cursor: 0,
             glog_right_scroll: 0,
             glog_right_cursor: 0,
+            glog_selected_commits: Vec::new(),
             gdiff_left_active: true,
             gdiff_rows: Vec::new(),
             gdiff_scroll: 0,
@@ -1049,8 +1051,14 @@ impl Repl {
             if idx < self.glog_commits.len() {
                 let commit = &self.glog_commits[idx];
                 let is_cursor = idx == self.glog_left_cursor;
-                let (fg, bg) = if is_cursor {
+                let hash_short_check = commit.get(..7).unwrap_or(commit.as_str());
+                let is_selected = self.glog_selected_commits.iter().any(|c| c == hash_short_check);
+                let (fg, bg) = if is_cursor && is_selected {
+                    (Color::Black, Color::Green)
+                } else if is_cursor {
                     (Color::Black, Color::Cyan)
+                } else if is_selected {
+                    (Color::White, Color::DarkGreen)
                 } else {
                     (Color::White, Color::Black)
                 };
@@ -1080,6 +1088,13 @@ impl Repl {
                 };
 
                 let hash_short = hash.get(..7).unwrap_or(hash);
+                let hash_color = if is_cursor {
+                    Color::Black
+                } else if is_selected {
+                    Color::White
+                } else {
+                    Color::Yellow
+                };
                 let line_str = format!("{} {}", hash_short, disp);
                 let pad = left_width.saturating_sub(UnicodeWidthStr::width(line_str.as_str()));
 
@@ -1087,11 +1102,7 @@ impl Repl {
                     stdout,
                     cursor::MoveTo(0, y),
                     SetBackgroundColor(bg),
-                    SetForegroundColor(if is_cursor {
-                        Color::Black
-                    } else {
-                        Color::Yellow
-                    }),
+                    SetForegroundColor(hash_color),
                     Print(hash_short),
                     SetForegroundColor(fg),
                     Print(format!(" {}{}", disp, " ".repeat(pad))),

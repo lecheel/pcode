@@ -459,6 +459,73 @@ impl Repl {
                     self.glog_right_cursor = self.glog_right_cursor.saturating_sub(vis);
                 }
             }
+            KeyCode::Char('c') => {
+                if !self.glog_selected_commits.is_empty() {
+                    let mut files = Vec::new();
+                    for h in &self.glog_selected_commits {
+                        let output = std::process::Command::new("git")
+                            .arg("show")
+                            .arg("--name-only")
+                            .arg("--pretty=format:")
+                            .arg(h)
+                            .output();
+                        if let Ok(out) = output {
+                            let s = String::from_utf8_lossy(&out.stdout);
+                            for f in s.lines() {
+                                let f = f.trim();
+                                if !f.is_empty() && !files.contains(&f.to_string()) {
+                                    files.push(f.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let mut content = String::new();
+                    for f in &files {
+                        content.push_str(&format!("// {}\n", f));
+                        if let Ok(c) = std::fs::read_to_string(f) {
+                            content.push_str(&c);
+                            if !c.ends_with('\n') {
+                                content.push('\n');
+                            }
+                        } else {
+                            content.push_str("<failed to read file>\n");
+                        }
+                    }
+                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
+                        Ok(_) => {
+                            self.push_command_info(format!("  📋 Copied {} files to clipboard:", files.len()), LineStyle::ToolResult);
+                            for f in &files {
+                                self.push_command_info(format!("    • {}", f), LineStyle::Dim);
+                            }
+                            self.glog_selected_commits.clear();
+                        }
+                        Err(e) => {
+                            self.push_command_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error);
+                        }
+                    }
+                    self.mode = Mode::Normal;
+                } else {
+                    self.mode = Mode::Normal;
+                    self.push_command_info("  No commits selected", LineStyle::Dim);
+                }
+            }
+            KeyCode::Char(' ') => {
+                if self.glog_left_active {
+                    let hash_short = self.glog_commits[self.glog_left_cursor]
+                        .get(..7)
+                        .unwrap_or(&self.glog_commits[self.glog_left_cursor]).to_string();
+                    if let Some(idx) = self.glog_selected_commits.iter().position(|c| c == &hash_short) {
+                        self.glog_selected_commits.remove(idx);
+                    } else {
+                        self.glog_selected_commits.push(hash_short);
+                    }
+                    if self.glog_left_cursor < self.glog_commits.len().saturating_sub(1) {
+                        self.glog_left_cursor += 1;
+                        self.glog_right_scroll = 0;
+                        self.glog_right_cursor = 0;
+                    }
+                }
+            }
             _ => {}
         }
         self.render(stdout)?;
