@@ -858,7 +858,9 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => (" ", &self.editor, 0),
+            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => {
+                (" ", &self.editor, 0)
+            }
         };
         let input_text = format!("{}{}", prompt, editor.content());
         queue!(
@@ -870,7 +872,12 @@ impl Repl {
             style::ResetColor
         )?;
         match self.mode {
-            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => {
+            Mode::Normal
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::Merge
+            | Mode::GitLog
+            | Mode::GitDiff => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
@@ -933,7 +940,7 @@ impl Repl {
             );
             let line2_str = format!(
                 "{}{}{}{}{}{}{}",
-                get_skill_str(" F7", "--NA"),
+                get_skill_str(" F7", "DiffSide"),
                 get_skill_str(" F8", "Func"),
                 get_skill_str(" F9", "Merge"),
                 get_skill_str("F10", "Skills"),
@@ -1165,11 +1172,19 @@ impl Repl {
                         };
                         let pad = max_diff_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
                         let is_cursor = !self.glog_left_active && idx == self.glog_right_cursor;
-                        let bg = if is_cursor { Color::DarkGrey } else { Color::Black };
+                        let bg = if is_cursor {
+                            Color::DarkGrey
+                        } else {
+                            Color::Black
+                        };
                         queue!(
                             stdout,
                             cursor::MoveTo((split_x + 1) as u16, y),
-                            if is_cursor { SetAttribute(Attribute::Bold) } else { SetAttribute(Attribute::Reset) },
+                            if is_cursor {
+                                SetAttribute(Attribute::Bold)
+                            } else {
+                                SetAttribute(Attribute::Reset)
+                            },
                             SetBackgroundColor(bg),
                             SetForegroundColor(color),
                             Print(format!(" {}{}", disp, " ".repeat(pad))),
@@ -1208,14 +1223,30 @@ impl Repl {
         let left_width = split_x.saturating_sub(1);
         let right_width = term_width.saturating_sub(split_x).saturating_sub(1);
 
-        let left_hdr_bg = if self.gdiff_left_active { Color::Cyan } else { Color::DarkGrey };
-        let left_hdr_fg = if self.gdiff_left_active { Color::Black } else { Color::White };
-        let right_hdr_bg = if !self.gdiff_left_active { Color::Cyan } else { Color::DarkGrey };
-        let right_hdr_fg = if !self.gdiff_left_active { Color::Black } else { Color::Cyan };
+        let left_hdr_bg = if self.gdiff_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let left_hdr_fg = if self.gdiff_left_active {
+            Color::Black
+        } else {
+            Color::White
+        };
+        let right_hdr_bg = if !self.gdiff_left_active {
+            Color::Cyan
+        } else {
+            Color::DarkGrey
+        };
+        let right_hdr_fg = if !self.gdiff_left_active {
+            Color::Black
+        } else {
+            Color::Cyan
+        };
 
         let left_title = " Original (HEAD) ";
         let right_title = " Modified (Buffer) ";
-        
+
         let left_pad = left_width.saturating_sub(UnicodeWidthStr::width(left_title));
         let right_pad = right_width.saturating_sub(UnicodeWidthStr::width(right_title));
 
@@ -1276,7 +1307,7 @@ impl Repl {
             if idx < self.gdiff_rows.len() {
                 let row = &self.gdiff_rows[idx];
                 let is_cursor = idx == self.gdiff_cursor;
-                
+
                 if let Some(left) = &row.left {
                     let (fg, bg) = if is_cursor {
                         (Color::Black, Color::Cyan)
@@ -1290,8 +1321,10 @@ impl Repl {
                     let line_num = row.left_num.unwrap_or(0);
                     let line_num_str = format!("{:>4} ", line_num);
                     let disp = trunc(left, left_width.saturating_sub(5));
-                    let pad = left_width.saturating_sub(5).saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                    
+                    let pad = left_width
+                        .saturating_sub(5)
+                        .saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
@@ -1332,8 +1365,10 @@ impl Repl {
                     let line_num = row.right_num.unwrap_or(0);
                     let line_num_str = format!("{:>4} ", line_num);
                     let disp = trunc(right, right_width.saturating_sub(5));
-                    let pad = right_width.saturating_sub(5).saturating_sub(UnicodeWidthStr::width(disp.as_str()));
-                    
+                    let pad = right_width
+                        .saturating_sub(5)
+                        .saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+
                     queue!(
                         stdout,
                         cursor::MoveTo((split_x + 1) as u16, y),

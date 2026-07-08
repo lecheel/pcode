@@ -391,7 +391,8 @@ impl Repl {
             }
             KeyCode::PageDown | KeyCode::Char(' ') => {
                 let vis = self.response_area_height().saturating_sub(2);
-                self.gdiff_cursor = (self.gdiff_cursor + vis).min(self.gdiff_rows.len().saturating_sub(1));
+                self.gdiff_cursor =
+                    (self.gdiff_cursor + vis).min(self.gdiff_rows.len().saturating_sub(1));
             }
             KeyCode::PageUp => {
                 let vis = self.response_area_height().saturating_sub(2);

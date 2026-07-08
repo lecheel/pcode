@@ -217,16 +217,16 @@ impl Repl {
         } else {
             ">>>>>>> REPLACE".to_string()
         };
-        let end_color = if applied {
-            Color::Red
-        } else {
-            Color::Magenta
-        };
+        let end_color = if applied { Color::Red } else { Color::Magenta };
         right_rows.push((end_marker, end_color, true));
         right_rows
     }
     fn get_right_rows(&self, hunk: &PatchHunk) -> Vec<(String, Color, bool)> {
-        let applied = self.merge_applied.get(self.merge_index).copied().unwrap_or(false);
+        let applied = self
+            .merge_applied
+            .get(self.merge_index)
+            .copied()
+            .unwrap_or(false);
         Self::build_right_rows(hunk, applied)
     }
 
@@ -291,8 +291,8 @@ impl Repl {
             };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
         let search = &hunk.search;
-        
-        let mut candidates: Vec<(usize, usize)> = Vec::new(); 
+
+        let mut candidates: Vec<(usize, usize)> = Vec::new();
         if !search.is_empty() && !file_lines.is_empty() {
             for i in 0..=file_lines.len().saturating_sub(search.len()) {
                 let mut score = 0;
@@ -309,7 +309,7 @@ impl Repl {
             }
         }
         candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        
+
         let best_match_idx = candidates.first().map(|(i, _)| *i).unwrap_or(0);
         let max_score = candidates.first().map(|(_, s)| *s).unwrap_or(0);
 
@@ -500,7 +500,8 @@ impl Repl {
                 if self.merge_candidates.is_empty() {
                     self.push_info("  No candidates found.", LineStyle::Error);
                 } else {
-                    self.merge_candidate_idx = (self.merge_candidate_idx + 1) % self.merge_candidates.len();
+                    self.merge_candidate_idx =
+                        (self.merge_candidate_idx + 1) % self.merge_candidates.len();
                     let idx = self.merge_candidates[self.merge_candidate_idx];
                     let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
                     self.merge_match_idx = idx;
@@ -508,7 +509,11 @@ impl Repl {
                     self.merge_cursor = idx;
                     self.merge_file_scroll = idx.saturating_sub(2);
                     self.push_info(
-                        format!("  ➡️ Candidate {}/{}", self.merge_candidate_idx + 1, self.merge_candidates.len()),
+                        format!(
+                            "  ➡️ Candidate {}/{}",
+                            self.merge_candidate_idx + 1,
+                            self.merge_candidates.len()
+                        ),
                         LineStyle::Info,
                     );
                 }
@@ -931,7 +936,11 @@ impl Repl {
         )?;
 
         // ── build right panel rows (the patch) ──────────────────
-        let is_applied = self.merge_applied.get(self.merge_index).copied().unwrap_or(false);
+        let is_applied = self
+            .merge_applied
+            .get(self.merge_index)
+            .copied()
+            .unwrap_or(false);
         let right_rows: Vec<(String, Color, bool)> = Self::build_right_rows(hunk, is_applied);
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
         let file_path = project_root.join(&hunk.filename);
