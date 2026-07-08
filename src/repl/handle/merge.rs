@@ -436,6 +436,10 @@ impl Repl {
                                 );
                                 self.merge_applied[self.merge_index] = true;
                                 self.merge_last_applied_idx = Some(self.merge_index);
+                                self.merge_match_idx = usize::MAX / 2;
+                                self.merge_match_end = usize::MAX / 2;
+                                self.merge_candidates.clear();
+                                self.merge_candidate_idx = 0;
                             }
                         }
                         Err(e) => {
@@ -470,6 +474,10 @@ impl Repl {
                             self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult);
                             self.merge_applied[self.merge_index] = true;
                             self.merge_last_applied_idx = Some(self.merge_index);
+                            self.merge_match_idx = usize::MAX / 2;
+                            self.merge_match_end = usize::MAX / 2;
+                            self.merge_candidates.clear();
+                            self.merge_candidate_idx = 0;
                         }
                         Err(e) => {
                             let _ = pop_undo(&hunk.filename);
