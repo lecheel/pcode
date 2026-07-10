@@ -18,6 +18,7 @@ pub struct PatchHunk {
     pub filename: String,
     pub search: Vec<String>,
     pub replace: Vec<String>,
+    pub is_raw: bool,
 }
 
 pub fn parse_patches(content: &str) -> Vec<PatchHunk> {
@@ -52,6 +53,7 @@ fn parse_skeleton_patches(content: &str) -> Vec<PatchHunk> {
                     filename: current_filename.clone(),
                     search: current_lines.clone(),
                     replace: Vec::new(),
+                    is_raw: true,
                 });
                 current_lines.clear();
             }
@@ -74,6 +76,7 @@ fn parse_skeleton_patches(content: &str) -> Vec<PatchHunk> {
             filename: current_filename,
             search: current_lines,
             replace: Vec::new(),
+            is_raw: true,
         });
     }
     hunks
@@ -90,6 +93,7 @@ fn parse_aider_patches(content: &str) -> Vec<PatchHunk> {
                 filename: current_filename.clone(),
                 search: Vec::new(),
                 replace: Vec::new(),
+                is_raw: false,
             });
             state = 1;
         } else if line.starts_with("=======") {
@@ -200,6 +204,7 @@ fn parse_git_or_unified_patches(content: &str) -> Vec<PatchHunk> {
                 filename: current_filename.clone(),
                 search: Vec::new(),
                 replace: Vec::new(),
+                is_raw: false,
             });
             state = 1;
         } else if line.starts_with("-") && !line.starts_with("---") {
@@ -291,6 +296,7 @@ fn parse_raw_paste(content: &str) -> Vec<PatchHunk> {
         filename,
         search: search_lines,
         replace: Vec::new(),
+        is_raw: true,
     }]
 }
 
@@ -366,7 +372,6 @@ pub fn run_clipboard_patch(
         if hunk.search.is_empty() {
             continue;
         }
-
         let patch_str = format!(
             "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
             hunk.search.join("\n"),
