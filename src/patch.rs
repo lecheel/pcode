@@ -102,7 +102,9 @@ fn parse_aider_patches(content: &str) -> Vec<PatchHunk> {
         } else {
             if state == 0 {
                 let trimmed = line.trim();
-                if trimmed.starts_with("// === SKELETON MODE") || trimmed.starts_with("//--+ file:///") {
+                if trimmed.starts_with("// === SKELETON MODE")
+                    || trimmed.starts_with("//--+ file:///")
+                {
                     continue;
                 }
                 let mut found_fn = None;

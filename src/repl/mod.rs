@@ -1052,7 +1052,10 @@ impl Repl {
                 let commit = &self.glog_commits[idx];
                 let is_cursor = idx == self.glog_left_cursor;
                 let hash_short_check = commit.get(..7).unwrap_or(commit.as_str());
-                let is_selected = self.glog_selected_commits.iter().any(|c| c == hash_short_check);
+                let is_selected = self
+                    .glog_selected_commits
+                    .iter()
+                    .any(|c| c == hash_short_check);
                 let (fg, bg) = if is_cursor && is_selected {
                     (Color::Black, Color::Green)
                 } else if is_cursor {

@@ -17,11 +17,11 @@ fn print_help() {
     eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
     eprintln!("  pl                       Start REPL with default config");
-    eprintln!("  pl -c <config.toml>      Start REPL with custom config");
     eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
     eprintln!("  pl --fastpatch [file]    Apply patches from file locally using fuzzy match");
     eprintln!("  pl --pb                  Apply patches from clipboard locally using fuzzy match");
     eprintln!("  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf");
+    eprintln!("  pl --patch               Print and copy the aider patch format to clipboard");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
@@ -31,7 +31,9 @@ fn print_help() {
 #[cfg(target_os = "macos")]
 fn read_clipboard() -> Result<String, String> {
     use std::process::Command;
-    let output = Command::new("pbpaste").output().map_err(|e| e.to_string())?;
+    let output = Command::new("pbpaste")
+        .output()
+        .map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -54,6 +56,53 @@ fn read_clipboard() -> Result<String, String> {
 fn read_clipboard() -> Result<String, String> {
     Err("Clipboard reading is only supported on macOS and Linux".to_string())
 }
+
+#[cfg(target_os = "macos")]
+fn write_clipboard(content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Command;
+    let mut child = Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(content.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    child.wait().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn write_clipboard(content: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::Command;
+    let mut child = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .or_else(|_| {
+            Command::new("xsel")
+                .args(["--clipboard", "--input"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+        })
+        .map_err(|e| e.to_string())?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(content.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    child.wait().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn write_clipboard(_content: &str) -> Result<(), String> {
+    Err("Clipboard writing is only supported on macOS and Linux".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut config_path = None;
@@ -113,6 +162,29 @@ async fn main() -> Result<()> {
             }
             "--pb" => {
                 use_clipboard_patch = true;
+            }
+            "--patch" => {
+                let template = r#"Please apply changes using this aider style format all changed in single code block
+```
+// src/filename1.rs
+<<<<<<< SEARCH
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
+[modified lines]
+>>>>>>> REPLACE
+ // src/filename2.rs
+<<<<<<< SEARCH
+[exact original lines (include enough context to be unique, avoid too thin blocks)]
+=======
+[modified lines]
+>>>>>>> REPLACE
+```"#;
+                println!("{}", template);
+                match write_clipboard(template) {
+                    Ok(_) => println!("📋 Copied to clipboard!"),
+                    Err(e) => eprintln!("\n❌ Clipboard Error: {}", e),
+                }
+                std::process::exit(0);
             }
             "--fzf" => {
                 use std::io::Write;
@@ -197,7 +269,7 @@ async fn main() -> Result<()> {
     let bin_path = config.tools.codex_eyes_binary.clone();
     let agent = agent::PatchAgent::new(client, bin_path, config.clone());
     let mut app = repl::Repl::new(agent, config);
-    
+
     if use_clipboard_patch {
         let content = match read_clipboard() {
             Ok(c) => c,

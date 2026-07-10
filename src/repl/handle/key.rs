@@ -493,14 +493,20 @@ impl Repl {
                     }
                     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
                         Ok(_) => {
-                            self.push_command_info(format!("  📋 Copied {} files to clipboard:", files.len()), LineStyle::ToolResult);
+                            self.push_command_info(
+                                format!("  📋 Copied {} files to clipboard:", files.len()),
+                                LineStyle::ToolResult,
+                            );
                             for f in &files {
                                 self.push_command_info(format!("    • {}", f), LineStyle::Dim);
                             }
                             self.glog_selected_commits.clear();
                         }
                         Err(e) => {
-                            self.push_command_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error);
+                            self.push_command_info(
+                                format!("  ❌ Clipboard error: {}", e),
+                                LineStyle::Error,
+                            );
                         }
                     }
                     self.mode = Mode::Normal;
@@ -513,8 +519,13 @@ impl Repl {
                 if self.glog_left_active {
                     let hash_short = self.glog_commits[self.glog_left_cursor]
                         .get(..7)
-                        .unwrap_or(&self.glog_commits[self.glog_left_cursor]).to_string();
-                    if let Some(idx) = self.glog_selected_commits.iter().position(|c| c == &hash_short) {
+                        .unwrap_or(&self.glog_commits[self.glog_left_cursor])
+                        .to_string();
+                    if let Some(idx) = self
+                        .glog_selected_commits
+                        .iter()
+                        .position(|c| c == &hash_short)
+                    {
                         self.glog_selected_commits.remove(idx);
                     } else {
                         self.glog_selected_commits.push(hash_short);
