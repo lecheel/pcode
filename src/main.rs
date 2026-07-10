@@ -1,5 +1,6 @@
 // src/main.rs
 use anyhow::Result;
+use std::io::Write;
 use std::path::Path;
 mod agent;
 mod config;
@@ -24,7 +25,7 @@ fn print_help() {
     eprintln!("  pl --patch               Print and copy the aider patch format to clipboard");
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
-    eprintln!("  pl -s                    Run 'cli sync' and exit");
+    eprintln!("  pl -s [repo]             Sync repo (uses active, cwd resolve, or prompt)");
     eprintln!("  pl --fmt [edition]       Format modified Rust files in git repo (default: 2021)");
     eprintln!("  pl --help                Show this help message");
 }
@@ -131,18 +132,69 @@ async fn main() -> Result<()> {
             }
             "-s" | "--sync" => {
                 let extra_args: Vec<String> = args.collect();
-                let mut cmd = std::process::Command::new("cli");
-                cmd.arg("sync");
-                for a in extra_args {
-                    cmd.arg(a);
+                let mut config = config::load_config(config_path.as_deref())?;
+                if config.daemon.base_url.is_empty() {
+                    eprintln!("❌ Daemon base_url is not configured.");
+                    std::process::exit(1);
                 }
-                match cmd.status() {
-                    Ok(status) => {
-                        if !status.success() {
-                            eprintln!("cli sync exited with code: {:?}", status.code());
+
+                let explicit_repo = extra_args.first().map(|s| s.as_str());
+
+                let repo_to_sync = if let Some(id) = explicit_repo {
+                    Some(id.to_string())
+                } else if let Some(active) = &config.daemon.active_repo {
+                    println!("🟢 Active repo from config: {}", active);
+                    Some(active.clone())
+                } else {
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| ".".to_string());
+                    
+                    match tools::daemon::resolve_repo_by_path(&config, &cwd).await {
+                        Ok(id) => {
+                            println!("📁 Current directory belongs to repo: {}", id);
+                            Some(id)
+                        }
+                        Err(_) => {
+                            println!("⚠️ Not inside a registered repo. Available repos:");
+                            match tools::daemon::fetch_repos(&config).await {
+                                Ok(repos) => {
+                                    if repos.is_empty() {
+                                        println!("  No repos registered.");
+                                        None
+                                    } else {
+                                        for r in &repos {
+                                            if let Some(rid) = r["id"].as_str() {
+                                                let path = r["source_path"].as_str().unwrap_or("?");
+                                                let files = r["file_count"].as_u64().unwrap_or(0);
+                                                println!("  • {:12} ({} files) {}", rid, files, path);
+                                            }
+                                        }
+                                        print!("\nEnter repo ID to sync (or Enter to cancel): ");
+                                        std::io::stdout().flush().unwrap();
+                                        let mut input = String::new();
+                                        std::io::stdin().read_line(&mut input).unwrap();
+                                        let input = input.trim().to_string();
+                                        if input.is_empty() { None } else { Some(input) }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("❌ Failed to fetch repos: {}", e);
+                                    None
+                                }
+                            }
                         }
                     }
-                    Err(e) => eprintln!("Failed to run cli sync: {}", e),
+                };
+
+                if let Some(repo_id) = repo_to_sync {
+                    println!("🔄 Syncing repo: {}...", repo_id);
+                    match tools::daemon::sync_repo(&config, &repo_id).await {
+                        Ok(msg) => println!("✅ {}", msg),
+                        Err(e) => eprintln!("❌ Sync failed: {}", e),
+                    }
+                } else {
+                    println!("Sync cancelled.");
                 }
                 std::process::exit(0);
             }
