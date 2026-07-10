@@ -293,7 +293,13 @@ impl Repl {
         let search = &hunk.search;
 
         let mut candidates: Vec<(usize, usize)> = Vec::new();
+        // Minimum fraction of matching lines (relative to search block length)
+        // required for a window to be considered a real candidate. Keeps
+        // near-garbage overlaps (e.g. a single incidental blank-line match)
+        // out of the n/N candidate cycle.
+        const MIN_MATCH_RATIO: f64 = 0.4;
         if !search.is_empty() && !file_lines.is_empty() {
+            let min_score = ((search.len() as f64) * MIN_MATCH_RATIO).ceil().max(1.0) as usize;
             for i in 0..=file_lines.len().saturating_sub(search.len()) {
                 let mut score = 0;
                 for j in 0..search.len() {
@@ -303,7 +309,7 @@ impl Repl {
                         score += 1;
                     }
                 }
-                if score > 0 {
+                if score >= min_score {
                     candidates.push((i, score));
                 }
             }
@@ -554,11 +560,6 @@ impl Repl {
             }
             KeyCode::Char('m') => {
                 self.pending = Some('m');
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                // Goto the hunk: recenter left panel & cursor on the current match block
-                self.merge_cursor = self.merge_match_idx;
-                self.merge_file_scroll = self.merge_match_idx.saturating_sub(2);
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.merge_left_active {
