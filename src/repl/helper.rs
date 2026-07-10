@@ -1,7 +1,7 @@
 use super::*;
+use std::collections::HashSet;
 use std::io;
 use std::path::Path;
-use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum PopupPosition {
@@ -319,7 +319,7 @@ impl FileNode {
             for entry in dirs_and_files {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                
+
                 if name.starts_with('.') || name == "target" || name == "node_modules" {
                     continue;
                 }
@@ -336,7 +336,7 @@ impl FileNode {
                 } else {
                     Vec::new()
                 };
-                
+
                 nodes.push(FileNode {
                     name,
                     path: rel_path,
@@ -420,7 +420,7 @@ impl FilePickerState {
             }
         }
     }
-    
+
     pub fn move_up(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -436,7 +436,8 @@ impl FilePickerState {
 fn flatten(nodes: &[FileNode], depth: usize, filter: &str) -> Vec<FlatNode> {
     let mut result = Vec::new();
     for node in nodes {
-        let matches = filter.is_empty() || node.path.to_lowercase().contains(&filter.to_lowercase());
+        let matches =
+            filter.is_empty() || node.path.to_lowercase().contains(&filter.to_lowercase());
         if node.is_dir {
             let children = flatten(&node.children, depth + 1, filter);
             if !children.is_empty() || matches {

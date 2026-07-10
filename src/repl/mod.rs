@@ -16,7 +16,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use editor::LineEditor;
-use helper::{Popup, FilePickerState};
+use helper::{FilePickerState, Popup};
 use mode::Mode;
 use std::io::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
@@ -834,7 +834,7 @@ impl Repl {
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
             segments.push((" │ ".to_string(), Color::Grey));
-            segments.push(("[o] EDITOR".to_string(), Color::Cyan));
+            segments.push(("[o] EDITOR [Ins] PastePatchCode".to_string(), Color::Cyan));
             if !git_info.is_empty() {
                 segments.push((git_info, Color::Green));
             }
@@ -868,9 +868,12 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff | Mode::FilePicker => {
-                (" ", &self.editor, 0)
-            }
+            Mode::Visual
+            | Mode::VisualLine
+            | Mode::Merge
+            | Mode::GitLog
+            | Mode::GitDiff
+            | Mode::FilePicker => (" ", &self.editor, 0),
         };
         let input_text = format!("{}{}", prompt, editor.content());
         if !matches!(self.mode, Mode::Merge) {
@@ -1234,7 +1237,7 @@ impl Repl {
     pub(crate) fn render_file_picker(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
         let term_width = self.term_width();
-        
+
         for i in 0..ra_height {
             queue!(
                 stdout,
@@ -1242,10 +1245,10 @@ impl Repl {
                 terminal::Clear(ClearType::CurrentLine)
             )?;
         }
-        
+
         if let Some(picker) = self.file_picker.as_mut() {
             let nodes = &picker.flat_nodes;
-            
+
             queue!(
                 stdout,
                 cursor::MoveTo(0, 0),
@@ -1256,7 +1259,7 @@ impl Repl {
                 style::ResetColor,
                 SetAttribute(Attribute::Reset)
             )?;
-            
+
             let visible_height = ra_height.saturating_sub(2);
             let max_scroll = nodes.len().saturating_sub(visible_height);
             if picker.scroll > max_scroll {
@@ -1267,7 +1270,7 @@ impl Repl {
             } else if picker.cursor >= picker.scroll + visible_height {
                 picker.scroll = picker.cursor + 1 - visible_height;
             }
-            
+
             for i in 0..visible_height {
                 let y = (i + 1) as u16;
                 let idx = picker.scroll + i;
@@ -1275,13 +1278,13 @@ impl Repl {
                     let node = &nodes[idx];
                     let is_selected = picker.selected.contains(&node.path);
                     let is_cursor = idx == picker.cursor;
-                    
+
                     let indent = "  ".repeat(node.depth);
                     let icon = if node.is_dir { "📁" } else { "📄" };
                     let marker = if is_selected { "✅" } else { "  " };
-                    
+
                     let line_str = format!("{} {} {}{}", marker, icon, indent, node.name);
-                    
+
                     let (fg, bg) = if is_cursor {
                         (Color::Black, Color::Cyan)
                     } else if is_selected {
@@ -1289,7 +1292,7 @@ impl Repl {
                     } else {
                         (Color::White, Color::Black)
                     };
-                    
+
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
@@ -1297,7 +1300,7 @@ impl Repl {
                         SetForegroundColor(fg),
                         Print(&line_str)
                     )?;
-                    
+
                     let pad = term_width.saturating_sub(UnicodeWidthStr::width(line_str.as_str()));
                     if pad > 0 {
                         queue!(stdout, Print(" ".repeat(pad)))?;
@@ -1312,7 +1315,7 @@ impl Repl {
                     )?;
                 }
             }
-            
+
             let footer_y = ra_height as u16;
             let mut loc_count = 0;
             let mut file_count = 0;
@@ -1323,12 +1326,12 @@ impl Repl {
                     file_count += 1;
                 }
             }
-            
+
             let footer = format!(
                 " {} files, {} LOC selected | [Space] Toggle [c] Copy [Enter] Open [q] Quit ",
                 file_count, loc_count
             );
-            
+
             queue!(
                 stdout,
                 cursor::MoveTo(0, footer_y),
