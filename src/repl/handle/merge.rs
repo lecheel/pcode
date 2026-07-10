@@ -998,7 +998,7 @@ impl Repl {
         } else {
             String::new()
         };
-        let hint_y = self.height.saturating_sub(3) as u16;
+        let hint_y = self.height.saturating_sub(1) as u16;
         queue!(
             stdout,
             cursor::MoveTo(0, hint_y),

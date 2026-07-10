@@ -873,14 +873,16 @@ impl Repl {
             }
         };
         let input_text = format!("{}{}", prompt, editor.content());
-        queue!(
-            stdout,
-            cursor::MoveTo(0, input_y),
-            terminal::Clear(ClearType::CurrentLine),
-            SetForegroundColor(Color::White),
-            Print(&input_text),
-            style::ResetColor
-        )?;
+        if !matches!(self.mode, Mode::Merge) {
+            queue!(
+                stdout,
+                cursor::MoveTo(0, input_y),
+                terminal::Clear(ClearType::CurrentLine),
+                SetForegroundColor(Color::White),
+                Print(&input_text),
+                style::ResetColor
+            )?;
+        }
         match self.mode {
             Mode::Normal
             | Mode::Visual
