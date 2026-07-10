@@ -34,6 +34,22 @@ fn pop_undo(filename: &str) -> Option<String> {
 fn undo_stack_len(filename: &str) -> usize {
     MERGE_UNDO_STACK.with(|s| s.borrow().get(filename).map(|v| v.len()).unwrap_or(0))
 }
+thread_local! {
+    static MERGE_LAST_APPLIED_RANGE: RefCell<HashMap<String, (usize, usize)>> = RefCell::new(HashMap::new());
+}
+fn set_last_applied_range(filename: &str, start: usize, end: usize) {
+    MERGE_LAST_APPLIED_RANGE.with(|s| {
+        s.borrow_mut().insert(filename.to_string(), (start, end));
+    });
+}
+fn get_last_applied_range(filename: &str) -> Option<(usize, usize)> {
+    MERGE_LAST_APPLIED_RANGE.with(|s| s.borrow().get(filename).copied())
+}
+fn clear_last_applied_range(filename: &str) {
+    MERGE_LAST_APPLIED_RANGE.with(|s| {
+        s.borrow_mut().remove(filename);
+    });
+}
 
 #[derive(Clone)]
 pub(crate) enum DiffRow {
@@ -252,6 +268,7 @@ impl Repl {
             MERGE_UNDO_STACK.with(|s| {
                 s.borrow_mut().remove(&h.filename);
             });
+            clear_last_applied_range(&h.filename);
         }
         // Remove this line - merge_rows is not used
         // self.merge_rows = build_diff_rows(&hunks[0].search, &hunks[0].replace);
@@ -442,6 +459,11 @@ impl Repl {
                                 );
                                 self.merge_applied[self.merge_index] = true;
                                 self.merge_last_applied_idx = Some(self.merge_index);
+                                set_last_applied_range(
+                                    &hunk.filename,
+                                    start,
+                                    start + hunk.replace.len(),
+                                );
                                 self.merge_match_idx = usize::MAX / 2;
                                 self.merge_match_end = usize::MAX / 2;
                                 self.merge_candidates.clear();
@@ -480,6 +502,11 @@ impl Repl {
                             self.push_info(format!("  ✅ {}", msg), LineStyle::ToolResult);
                             self.merge_applied[self.merge_index] = true;
                             self.merge_last_applied_idx = Some(self.merge_index);
+                            set_last_applied_range(
+                                &hunk.filename,
+                                start,
+                                start + hunk.replace.len(),
+                            );
                             self.merge_match_idx = usize::MAX / 2;
                             self.merge_match_end = usize::MAX / 2;
                             self.merge_candidates.clear();
@@ -747,6 +774,7 @@ impl Repl {
                     .clone()
                     .unwrap_or((hunk_filename.clone(), self.merge_buffer_apply));
                 if let Some(undo_content) = pop_undo(&target_file) {
+                    clear_last_applied_range(&target_file);
                     if was_buffer {
                         let buf_idx = if let Some(idx) =
                             self.buffers.iter().position(|b| b.name() == target_file)
@@ -1064,6 +1092,9 @@ impl Repl {
                 let is_in_match = f_idx >= actual_match_idx && f_idx < matched_end;
                 let is_cursor = f_idx == cursor_line;
                 let is_ghost_anchor = !is_in_match && f_idx == actual_match_idx;
+                let is_applied_line = get_last_applied_range(&hunk.filename)
+                    .map(|(s, e)| f_idx >= s && f_idx < e)
+                    .unwrap_or(false);
                 let line_num = f_idx + 1;
                 let cursor_mark = if is_cursor {
                     ">"
@@ -1093,6 +1124,8 @@ impl Repl {
                     left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
+                } else if is_applied_line {
+                    (Color::Black, Color::Green)
                 } else if is_in_match {
                     (Color::White, Color::Blue)
                 } else if is_ghost_anchor {
