@@ -1,5 +1,7 @@
 use super::*;
 use std::io;
+use std::path::Path;
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum PopupPosition {
@@ -297,6 +299,197 @@ impl Popup {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct FileNode {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub children: Vec<FileNode>,
+    pub expanded: bool,
+}
+
+impl FileNode {
+    pub fn build(root: &Path, prefix: &str) -> Vec<FileNode> {
+        let mut nodes = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(root) {
+            let mut dirs_and_files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+            dirs_and_files.sort_by_key(|e| e.path());
+            for entry in dirs_and_files {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                
+                if name.starts_with('.') || name == "target" || name == "node_modules" {
+                    continue;
+                }
+
+                let rel_path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+
+                let is_dir = path.is_dir();
+                let children = if is_dir {
+                    FileNode::build(&path, &rel_path)
+                } else {
+                    Vec::new()
+                };
+                
+                nodes.push(FileNode {
+                    name,
+                    path: rel_path,
+                    is_dir,
+                    children,
+                    expanded: false,
+                });
+            }
+        }
+        nodes
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FlatNode {
+    pub path: String,
+    pub name: String,
+    pub depth: usize,
+    pub is_dir: bool,
+}
+
+pub struct FilePickerState {
+    pub root_nodes: Vec<FileNode>,
+    pub selected: HashSet<String>,
+    pub cursor: usize,
+    pub scroll: usize,
+    pub filter: String,
+    pub flat_nodes: Vec<FlatNode>,
+}
+
+impl FilePickerState {
+    pub fn new(root: &Path) -> Self {
+        let root_nodes = FileNode::build(root, "");
+        let mut state = Self {
+            root_nodes,
+            selected: HashSet::new(),
+            cursor: 0,
+            scroll: 0,
+            filter: String::new(),
+            flat_nodes: Vec::new(),
+        };
+        state.update_flat();
+        state
+    }
+
+    pub fn update_flat(&mut self) {
+        self.flat_nodes = flatten(&self.root_nodes, 0, &self.filter);
+        if self.cursor >= self.flat_nodes.len() && !self.flat_nodes.is_empty() {
+            self.cursor = self.flat_nodes.len() - 1;
+        }
+    }
+
+    pub fn toggle_expand(&mut self) {
+        if let Some(node) = self.flat_nodes.get(self.cursor) {
+            if node.is_dir {
+                toggle_node_expanded(&mut self.root_nodes, &node.path);
+                self.update_flat();
+            }
+        }
+    }
+
+    pub fn toggle_selection(&mut self) {
+        if let Some(node) = self.flat_nodes.get(self.cursor) {
+            if node.is_dir {
+                let paths = collect_files_under(&self.root_nodes, &node.path);
+                if paths.iter().all(|p| self.selected.contains(p)) {
+                    for p in &paths {
+                        self.selected.remove(p);
+                    }
+                } else {
+                    for p in &paths {
+                        self.selected.insert(p.clone());
+                    }
+                }
+            } else {
+                if self.selected.contains(&node.path) {
+                    self.selected.remove(&node.path);
+                } else {
+                    self.selected.insert(node.path.clone());
+                }
+            }
+        }
+    }
+    
+    pub fn move_up(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+    pub fn move_down(&mut self) {
+        if self.cursor < self.flat_nodes.len().saturating_sub(1) {
+            self.cursor += 1;
+        }
+    }
+}
+
+fn flatten(nodes: &[FileNode], depth: usize, filter: &str) -> Vec<FlatNode> {
+    let mut result = Vec::new();
+    for node in nodes {
+        let matches = filter.is_empty() || node.path.to_lowercase().contains(&filter.to_lowercase());
+        if node.is_dir {
+            let children = flatten(&node.children, depth + 1, filter);
+            if !children.is_empty() || matches {
+                result.push(FlatNode {
+                    path: node.path.clone(),
+                    name: node.name.clone(),
+                    depth,
+                    is_dir: true,
+                });
+                if filter.is_empty() {
+                    if node.expanded {
+                        result.extend(children);
+                    }
+                } else {
+                    result.extend(children);
+                }
+            }
+        } else {
+            if matches {
+                result.push(FlatNode {
+                    path: node.path.clone(),
+                    name: node.name.clone(),
+                    depth,
+                    is_dir: false,
+                });
+            }
+        }
+    }
+    result
+}
+
+fn toggle_node_expanded(nodes: &mut [FileNode], path: &str) {
+    for node in nodes.iter_mut() {
+        if node.path == path {
+            node.expanded = !node.expanded;
+            return;
+        }
+        toggle_node_expanded(&mut node.children, path);
+    }
+}
+
+fn collect_files_under(nodes: &[FileNode], path: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    for node in nodes {
+        if node.path == path || node.path.starts_with(&format!("{}/", path)) {
+            if node.is_dir {
+                result.extend(collect_files_under(&node.children, path));
+            } else {
+                result.push(node.path.clone());
+            }
+        }
+    }
+    result
 }
 
 impl super::Repl {

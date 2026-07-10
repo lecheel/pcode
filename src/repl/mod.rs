@@ -16,7 +16,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use editor::LineEditor;
-use helper::Popup;
+use helper::{Popup, FilePickerState};
 use mode::Mode;
 use std::io::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
@@ -128,6 +128,7 @@ pub struct Repl {
     pub(crate) gdiff_rows: Vec<crate::diff::DiffRow>,
     pub(crate) gdiff_scroll: usize,
     pub(crate) gdiff_cursor: usize,
+    pub(crate) file_picker: Option<FilePickerState>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -206,6 +207,7 @@ impl Repl {
             gdiff_rows: Vec::new(),
             gdiff_scroll: 0,
             gdiff_cursor: 0,
+            file_picker: None,
         }
     }
 
@@ -464,6 +466,12 @@ impl Repl {
         }
         if self.mode == Mode::GitLog {
             self.render_glog(stdout)?;
+            self.render_spinner_only(stdout)?;
+            stdout.flush()?;
+            return Ok(());
+        }
+        if self.mode == Mode::FilePicker {
+            self.render_file_picker(stdout)?;
             self.render_spinner_only(stdout)?;
             stdout.flush()?;
             return Ok(());
@@ -860,7 +868,7 @@ impl Repl {
             Mode::Command => (":", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Search => ("/", &self.cmd_editor, self.cmd_editor.cursor_display_col()),
             Mode::Normal => (" ", &self.editor, 0),
-            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff => {
+            Mode::Visual | Mode::VisualLine | Mode::Merge | Mode::GitLog | Mode::GitDiff | Mode::FilePicker => {
                 (" ", &self.editor, 0)
             }
         };
@@ -879,7 +887,8 @@ impl Repl {
             | Mode::VisualLine
             | Mode::Merge
             | Mode::GitLog
-            | Mode::GitDiff => {
+            | Mode::GitDiff
+            | Mode::FilePicker => {
                 queue!(stdout, cursor::Hide)?;
             }
             Mode::Insert | Mode::Command | Mode::Search => {
@@ -1220,6 +1229,117 @@ impl Repl {
         Ok(())
     }
 
+    pub(crate) fn render_file_picker(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let ra_height = self.response_area_height();
+        let term_width = self.term_width();
+        
+        for i in 0..ra_height {
+            queue!(
+                stdout,
+                cursor::MoveTo(0, i as u16),
+                terminal::Clear(ClearType::CurrentLine)
+            )?;
+        }
+        
+        if let Some(picker) = self.file_picker.as_mut() {
+            let nodes = &picker.flat_nodes;
+            
+            queue!(
+                stdout,
+                cursor::MoveTo(0, 0),
+                SetBackgroundColor(Color::Cyan),
+                SetForegroundColor(Color::Black),
+                SetAttribute(Attribute::Bold),
+                Print(format!(" File Picker - Filter: {} ", picker.filter)),
+                style::ResetColor,
+                SetAttribute(Attribute::Reset)
+            )?;
+            
+            let visible_height = ra_height.saturating_sub(2);
+            let max_scroll = nodes.len().saturating_sub(visible_height);
+            if picker.scroll > max_scroll {
+                picker.scroll = max_scroll;
+            }
+            if picker.cursor < picker.scroll {
+                picker.scroll = picker.cursor;
+            } else if picker.cursor >= picker.scroll + visible_height {
+                picker.scroll = picker.cursor + 1 - visible_height;
+            }
+            
+            for i in 0..visible_height {
+                let y = (i + 1) as u16;
+                let idx = picker.scroll + i;
+                if idx < nodes.len() {
+                    let node = &nodes[idx];
+                    let is_selected = picker.selected.contains(&node.path);
+                    let is_cursor = idx == picker.cursor;
+                    
+                    let indent = "  ".repeat(node.depth);
+                    let icon = if node.is_dir { "📁" } else { "📄" };
+                    let marker = if is_selected { "✅" } else { "  " };
+                    
+                    let line_str = format!("{} {} {}{}", marker, icon, indent, node.name);
+                    
+                    let (fg, bg) = if is_cursor {
+                        (Color::Black, Color::Cyan)
+                    } else if is_selected {
+                        (Color::Green, Color::Black)
+                    } else {
+                        (Color::White, Color::Black)
+                    };
+                    
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(fg),
+                        Print(&line_str)
+                    )?;
+                    
+                    let pad = term_width.saturating_sub(UnicodeWidthStr::width(line_str.as_str()));
+                    if pad > 0 {
+                        queue!(stdout, Print(" ".repeat(pad)))?;
+                    }
+                    queue!(stdout, style::ResetColor)?;
+                } else {
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(Color::Black),
+                        Print(" ".repeat(term_width))
+                    )?;
+                }
+            }
+            
+            let footer_y = ra_height as u16;
+            let mut loc_count = 0;
+            let mut file_count = 0;
+            let root = std::path::PathBuf::from(&self.config.tools.project_root);
+            for path in &picker.selected {
+                if let Ok(content) = std::fs::read_to_string(root.join(path)) {
+                    loc_count += content.lines().count();
+                    file_count += 1;
+                }
+            }
+            
+            let footer = format!(
+                " {} files, {} LOC selected | [Space] Toggle [c] Copy [Enter] Open [q] Quit ",
+                file_count, loc_count
+            );
+            
+            queue!(
+                stdout,
+                cursor::MoveTo(0, footer_y),
+                SetBackgroundColor(Color::DarkGrey),
+                SetForegroundColor(Color::Yellow),
+                SetAttribute(Attribute::Bold),
+                Print(&footer),
+                style::ResetColor,
+                SetAttribute(Attribute::Reset)
+            )?;
+        }
+        Ok(())
+    }
     pub(crate) fn render_gdiff(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
         let ra_height = self.response_area_height();
         let term_width = self.term_width();

@@ -35,12 +35,16 @@ impl Repl {
                 Mode::Merge => self.handle_merge_key(key, stdout)?,
                 Mode::GitLog => self.handle_glog_key(key, stdout)?,
                 Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
+                Mode::FilePicker => self.handle_file_picker_key(key, stdout)?,
             }
             return Ok(());
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
             if !self.waiting {
-                if self.popup.active {
+                if self.mode == Mode::FilePicker {
+                    self.mode = Mode::Normal;
+                    self.file_picker = None;
+                } else if self.popup.active {
                     self.popup.hide();
                 } else {
                     self.show_task_file_picker();
@@ -71,7 +75,10 @@ impl Repl {
                 }
                 KeyCode::Char('e') => {
                     if !self.waiting {
-                        if self.popup.active {
+                        if self.mode == Mode::FilePicker {
+                            self.mode = Mode::Normal;
+                            self.file_picker = None;
+                        } else if self.popup.active {
                             self.popup.hide();
                         } else {
                             self.show_file_picker();
@@ -339,10 +346,80 @@ impl Repl {
             Mode::Merge => self.handle_merge_key(key, stdout)?,
             Mode::GitLog => self.handle_glog_key(key, stdout)?,
             Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
+            Mode::FilePicker => self.handle_file_picker_key(key, stdout)?,
         }
         Ok(())
     }
 
+    pub(super) fn handle_file_picker_key(
+        &mut self,
+        key: KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<()> {
+        if let Some(picker) = self.file_picker.as_mut() {
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => picker.move_down(),
+                KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
+                KeyCode::Char(' ') => picker.toggle_selection(),
+                KeyCode::Tab | KeyCode::Char('l') => picker.toggle_expand(),
+                KeyCode::Char('c') => {
+                    let root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let mut content = String::new();
+                    let mut files = Vec::new();
+                    for path in &picker.selected {
+                        files.push(path.clone());
+                    }
+                    files.sort();
+                    for path in &files {
+                        content.push_str(&format!("// {}\n", path));
+                        if let Ok(c) = std::fs::read_to_string(root.join(path)) {
+                            content.push_str(&c);
+                            if !c.ends_with('\n') {
+                                content.push('\n');
+                            }
+                        }
+                    }
+                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
+                        Ok(_) => {
+                            self.push_command_info(format!("  📋 Copied {} files to clipboard:", files.len()), LineStyle::ToolResult);
+                            self.mode = Mode::Normal;
+                            self.file_picker = None;
+                        }
+                        Err(e) => {
+                            self.push_command_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error);
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(node) = picker.flat_nodes.get(picker.cursor) {
+                        if !node.is_dir {
+                            let path = node.path.clone();
+                            self.load_file_to_buffer(&path, stdout)?;
+                            self.mode = Mode::Normal;
+                            self.file_picker = None;
+                        } else {
+                            picker.toggle_expand();
+                        }
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.mode = Mode::Normal;
+                    self.file_picker = None;
+                }
+                KeyCode::Char(c) => {
+                    picker.filter.push(c);
+                    picker.update_flat();
+                }
+                KeyCode::Backspace => {
+                    picker.filter.pop();
+                    picker.update_flat();
+                }
+                _ => {}
+            }
+        }
+        self.render(stdout)?;
+        Ok(())
+    }
     pub(super) fn handle_gdiff_key(
         &mut self,
         key: KeyEvent,

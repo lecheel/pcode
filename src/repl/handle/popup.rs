@@ -243,18 +243,8 @@ impl Repl {
 
     pub(super) fn show_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
-        let files = list_project_files(&root);
-        let items: Vec<PopupItem> = files
-            .iter()
-            .map(|f| PopupItem {
-                text: f.clone(),
-                is_active: false,
-                id: None,
-            })
-            .collect();
-        self.popup_mode = PopupMode::FilePicker;
-        self.popup
-            .show("Open File", items, 0, PopupPosition::Center);
+        self.file_picker = Some(crate::repl::helper::FilePickerState::new(&root));
+        self.mode = Mode::FilePicker;
     }
 
     pub(super) fn show_task_file_picker(&mut self) {

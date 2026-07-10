@@ -94,6 +94,10 @@ impl Repl {
                 self.push_command_info("Bye!", LineStyle::Dim);
                 return Ok(CommandResult::Quit);
             }
+            "px" => {
+                self.show_file_picker();
+                return Ok(CommandResult::Continue);
+            }
             "cancel" => {
                 if self.waiting {
                     if let Some(tx) = self.cancel_tx.take() {
