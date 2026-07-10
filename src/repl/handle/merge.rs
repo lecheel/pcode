@@ -79,6 +79,8 @@ pub(crate) fn build_diff_rows(search: &[String], replace: &[String]) -> Vec<Diff
         for i in inss.drain(n..) {
             rows.push(DiffRow::Insert(i));
         }
+        dels.clear();
+        inss.clear();
     }
 
     for change in diff.iter_all_changes() {
