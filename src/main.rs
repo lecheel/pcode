@@ -25,6 +25,7 @@ fn print_help() {
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s                    Run 'cli sync' and exit");
+    eprintln!("  pl --fmt [edition]       Format modified Rust files in git repo (default: 2021)");
     eprintln!("  pl --help                Show this help message");
 }
 
@@ -219,6 +220,75 @@ async fn main() -> Result<()> {
                     std::process::exit(0);
                 }
                 fastpatch_target = Some(selected);
+            }
+            "--fmt" => {
+                let is_edition = matches!(
+                    args.peek().map(|a| a.as_str()),
+                    Some("2015") | Some("2018") | Some("2021") | Some("2024")
+                );
+                let edition = if is_edition {
+                    args.next().unwrap()
+                } else {
+                    "2021".to_string()
+                };
+
+                let mut config = config::load_config(config_path.as_deref()).unwrap_or_else(|e| {
+                    eprintln!("❌ Config Error: {}", e);
+                    std::process::exit(1);
+                });
+                if config.tools.project_root.is_empty() {
+                    config.tools.project_root = std::env::current_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .to_string_lossy()
+                        .to_string();
+                }
+                let root = std::path::PathBuf::from(&config.tools.project_root);
+
+                let output = std::process::Command::new("git")
+                    .arg("diff")
+                    .arg("--name-only")
+                    .arg("HEAD")
+                    .current_dir(&root)
+                    .output();
+
+                let files: Vec<String> = match output {
+                    Ok(out) => String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .filter(|l| l.ends_with(".rs"))
+                        .map(String::from)
+                        .collect(),
+                    Err(e) => {
+                        eprintln!("❌ Failed to get git diff: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                if files.is_empty() {
+                    println!("No modified Rust files found.");
+                    std::process::exit(0);
+                }
+
+                let mut rustfmt = std::process::Command::new("rustfmt");
+                rustfmt.current_dir(&root);
+                rustfmt.arg("--edition").arg(&edition);
+                for f in &files {
+                    rustfmt.arg(f);
+                }
+
+                match rustfmt.status() {
+                    Ok(status) => {
+                        if !status.success() {
+                            eprintln!("❌ rustfmt exited with code: {:?}", status.code());
+                            std::process::exit(1);
+                        }
+                        println!("✅ Formatted {} files:", files.len());
+                        for f in &files {
+                            println!("  • {}", f);
+                        }
+                    }
+                    Err(e) => eprintln!("❌ Failed to run rustfmt: {}", e),
+                }
+                std::process::exit(0);
             }
             "--todo" => {
                 if let Some(p) = args.next() {
