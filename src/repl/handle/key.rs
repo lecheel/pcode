@@ -310,6 +310,34 @@ impl Repl {
             }
             return Ok(());
         }
+        if key.code == KeyCode::Insert {
+            if !self.waiting {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                    Ok(content) => {
+                        if !content.trim().is_empty() {
+                            let hunks = crate::patch::parse_patches(&content);
+                            if !hunks.is_empty() {
+                                self.merge_buffer_apply = true;
+                                self.start_merge(hunks);
+                            } else {
+                                self.pending_snippet = Some(content);
+                                self.push_info(
+                                    "  📋 Pasted snippet. Press 'i' and type your prompt:",
+                                    LineStyle::Dim,
+                                );
+                                self.scroll_to_bottom();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.push_info(format!("  ❌ Clipboard Error: {}", e), LineStyle::Error);
+                        self.scroll_to_bottom();
+                    }
+                }
+                self.render(stdout)?;
+            }
+            return Ok(());
+        }
         if self.popup.active && self.popup_mode != PopupMode::WhichKey {
             return self.handle_popup_key(key, stdout);
         }
@@ -377,16 +405,23 @@ impl Repl {
                             if !c.ends_with('\n') {
                                 content.push('\n');
                             }
+                            content.push('\n');
                         }
                     }
                     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
                         Ok(_) => {
-                            self.push_command_info(format!("  📋 Copied {} files to clipboard:", files.len()), LineStyle::ToolResult);
+                            self.push_command_info(
+                                format!("  📋 Copied {} files to clipboard:", files.len()),
+                                LineStyle::ToolResult,
+                            );
                             self.mode = Mode::Normal;
                             self.file_picker = None;
                         }
                         Err(e) => {
-                            self.push_command_info(format!("  ❌ Clipboard error: {}", e), LineStyle::Error);
+                            self.push_command_info(
+                                format!("  ❌ Clipboard error: {}", e),
+                                LineStyle::Error,
+                            );
                         }
                     }
                 }
