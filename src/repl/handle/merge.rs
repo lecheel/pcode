@@ -1125,7 +1125,7 @@ impl Repl {
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
                 } else if is_applied_line {
-                    (Color::Black, Color::Green)
+                    (Color::Black, Color::DarkYellow)
                 } else if is_in_match {
                     (Color::White, Color::Blue)
                 } else if is_ghost_anchor {
