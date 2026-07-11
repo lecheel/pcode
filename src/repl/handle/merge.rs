@@ -402,11 +402,7 @@ impl Repl {
             result = loose_best_match(search, &file_lines);
         }
 
-        self.merge_candidates = result
-            .candidates
-            .iter()
-            .map(|(s, e, _)| (*s, *e))
-            .collect();
+        self.merge_candidates = result.candidates.iter().map(|(s, e, _)| (*s, *e)).collect();
         self.merge_candidate_idx = 0;
 
         if result.candidates.is_empty() || result.score <= 0.0 {
@@ -674,18 +670,41 @@ impl Repl {
                     self.merge_right_cursor = self.merge_right_cursor.saturating_sub(1);
                 }
             }
-            KeyCode::Char('J') => {
+            KeyCode::Char('J') | KeyCode::Char('=') => {
                 if self.merge_left_active {
-                    self.merge_match_end += 1;
+                    let dist_to_start = self.merge_cursor.saturating_sub(self.merge_match_idx);
+                    let dist_to_end =
+                        (self.merge_match_end.saturating_sub(1)).saturating_sub(self.merge_cursor);
+                    if dist_to_start <= dist_to_end {
+                        self.merge_match_idx += 1;
+                        if self.merge_match_end <= self.merge_match_idx {
+                            self.merge_match_end = self.merge_match_idx + 1;
+                        }
+                        self.merge_cursor = self.merge_match_idx;
+                    } else {
+                        self.merge_match_end += 1;
+                        self.merge_cursor = self.merge_match_end.saturating_sub(1);
+                    }
                 } else {
                     let vis = self.response_area_height().saturating_sub(2);
                     self.merge_scroll += vis;
                 }
             }
-            KeyCode::Char('K') => {
+            KeyCode::Char('K') | KeyCode::Char('-') => {
                 if self.merge_left_active {
-                    if self.merge_match_end > self.merge_match_idx + 1 {
-                        self.merge_match_end -= 1;
+                    let dist_to_start = self.merge_cursor.saturating_sub(self.merge_match_idx);
+                    let dist_to_end =
+                        (self.merge_match_end.saturating_sub(1)).saturating_sub(self.merge_cursor);
+                    if dist_to_start <= dist_to_end {
+                        if self.merge_match_idx > 0 {
+                            self.merge_match_idx -= 1;
+                            self.merge_cursor = self.merge_match_idx;
+                        }
+                    } else {
+                        if self.merge_match_end > self.merge_match_idx + 1 {
+                            self.merge_match_end -= 1;
+                            self.merge_cursor = self.merge_match_end.saturating_sub(1);
+                        }
                     }
                 } else {
                     let vis = self.response_area_height().saturating_sub(2);
