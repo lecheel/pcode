@@ -463,6 +463,142 @@ impl Repl {
         Ok(())
     }
 
+    pub(super) fn revert_current_hunk(&mut self) -> anyhow::Result<()> {
+        let buffer_name = self.buffer().name();
+        if buffer_name == "Chat"
+            || buffer_name == "Console"
+            || buffer_name == "rg"
+            || buffer_name == "fd"
+            || buffer_name == "GitStatus"
+            || buffer_name.is_empty()
+        {
+            self.push_info("  ❌ Not a file buffer.", LineStyle::Error);
+            return Ok(());
+        }
+        let abs_git_root = match self.get_git_root() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+        let repo = match git2::Repository::open(&abs_git_root) {
+            Ok(r) => r,
+            Err(_) => return Ok(()),
+        };
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let raw_path = std::path::Path::new(buffer_name);
+        let abs_file_path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            project_root.join(buffer_name)
+        };
+        let abs_file_path = match abs_file_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let rel_path = match abs_file_path.strip_prefix(&abs_git_root) {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let mut content: String = self
+            .buffer()
+            .lines()
+            .iter()
+            .map(|l| l.content().clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let head_tree = match repo.head() {
+            Ok(h) => match h.peel_to_tree() {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            },
+            Err(_) => return Ok(()),
+        };
+        let entry = match head_tree.get_path(rel_path) {
+            Ok(e) => e,
+            Err(_) => return Ok(()),
+        };
+        let old_blob = match entry.to_object(&repo).and_then(|o| o.peel_to_blob()) {
+            Ok(b) => b,
+            Err(_) => return Ok(()),
+        };
+        let file_path = std::path::Path::new(buffer_name);
+        if !content.is_empty() {
+            if let Ok(bytes) = std::fs::read(&abs_file_path) {
+                if bytes.last() == Some(&b'\n') && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+            }
+        }
+        let patch = match git2::Patch::from_blob_and_buffer(
+            &old_blob,
+            Some(file_path),
+            content.as_bytes(),
+            Some(file_path),
+            None,
+        ) {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+
+        let current_line_num = self.buffer().cursor_line() + 1;
+        for h in 0..patch.num_hunks() {
+            let (hunk, _) = match patch.hunk(h) {
+                Ok(hk) => hk,
+                Err(_) => continue,
+            };
+            let new_start = hunk.new_start() as usize;
+            let new_lines = hunk.new_lines() as usize;
+            let end = new_start + new_lines.saturating_sub(1);
+            if current_line_num >= new_start && current_line_num <= end {
+                let start_idx = new_start.saturating_sub(1);
+                let end_idx = start_idx + new_lines;
+                
+                let mut reverted_lines = Vec::new();
+                let mut i = 0;
+                while let Ok(line) = patch.line_in_hunk(h, i) {
+                    let origin = line.origin();
+                    if let Ok(s) = std::str::from_utf8(line.content()) {
+                        let s = s.trim_end_matches('\n').to_string();
+                        match origin {
+                            '+' => {}
+                            _ => {
+                                if !s.is_empty() || origin == ' ' {
+                                    reverted_lines.push(s);
+                                }
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+                
+                let current_lines: Vec<String> = self
+                    .buffer()
+                    .lines()
+                    .iter()
+                    .map(|l| l.content().clone())
+                    .collect();
+                let mut updated_lines = Vec::new();
+                let safe_start = start_idx.min(current_lines.len());
+                updated_lines.extend_from_slice(&current_lines[..safe_start]);
+                updated_lines.extend(reverted_lines.iter().cloned());
+                if end_idx < current_lines.len() {
+                    updated_lines.extend_from_slice(&current_lines[end_idx..]);
+                }
+                
+                self.buffer_mut().clear();
+                let new_content = updated_lines.join("\n");
+                self.buffer_mut().push_str(&new_content, LineStyle::Plain);
+                
+                let new_cursor = safe_start.min(updated_lines.len().saturating_sub(1));
+                self.buffer_mut().set_cursor(new_cursor, 0);
+                self.ensure_cursor_visible();
+                
+                self.push_info("  ↩️ Reverted current hunk", LineStyle::Info);
+                return Ok(());
+            }
+        }
+        self.push_info("  Cursor is not inside a git hunk.", LineStyle::Error);
+        Ok(())
+    }
     pub(super) fn show_git_hunk_popup(&mut self) {
         if let Some(diff_lines) = self.get_current_hunk_diff() {
             if diff_lines.is_empty() {

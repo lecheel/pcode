@@ -37,6 +37,13 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
+        if self.pending == Some('g') && key.code == KeyCode::Char('r') {
+            self.revert_current_hunk()?;
+            self.clear_pending();
+            self.count = None;
+            self.render(stdout)?;
+            return Ok(());
+        }
         if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('w') {
             let result = self.execute_command("w", stdout)?;
             if let CommandResult::Quit = result {
