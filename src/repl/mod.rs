@@ -116,7 +116,7 @@ pub struct Repl {
     pub(crate) merge_last_modified: Option<(String, bool)>,
     pub(crate) merge_applied: Vec<bool>,
     pub(crate) merge_last_applied_idx: Option<usize>,
-    pub(crate) merge_candidates: Vec<usize>,
+    pub(crate) merge_candidates: Vec<(usize, usize)>,
     pub(crate) merge_candidate_idx: usize,
     pub(crate) glog_left_active: bool,
     pub(crate) glog_commits: Vec<String>,

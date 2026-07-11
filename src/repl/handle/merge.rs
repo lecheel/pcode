@@ -34,6 +34,71 @@ fn pop_undo(filename: &str) -> Option<String> {
 fn undo_stack_len(filename: &str) -> usize {
     MERGE_UNDO_STACK.with(|s| s.borrow().get(filename).map(|v| v.len()).unwrap_or(0))
 }
+/// Fallback for when `find_best_match`'s strict head/tail boundary
+/// requirement rejects every candidate window (common on short search
+/// blocks where the differing line falls inside the anchor region).
+/// Scores every window in the same size range by raw LCS match count,
+/// with no boundary requirement, so we always surface a best-effort
+/// match instead of silently giving up.
+fn loose_best_match(search: &[String], file: &[String]) -> crate::diff::MatchResult {
+    use crate::diff::{build_rows, lcs_diff, MatchResult, RowKind};
+    let search_len = search.len();
+    if search.is_empty() || file.is_empty() {
+        return MatchResult {
+            score: 0.0,
+            file_start: 0,
+            file_end: 0,
+            rows: vec![],
+            candidates: vec![],
+        };
+    }
+    let min_window = search_len.saturating_sub(5).max(1).min(file.len());
+    let max_window = (search_len + 6).min(file.len());
+    let mut all_candidates: Vec<(usize, usize, f32)> = Vec::new();
+    let mut best_score = -1.0_f32;
+    let mut best_start = 0;
+    let mut best_end = 0;
+    let mut best_raw = Vec::new();
+    for window_size in min_window..=max_window {
+        if window_size == 0 || window_size > file.len() {
+            continue;
+        }
+        for start in 0..=file.len() - window_size {
+            let end = start + window_size;
+            let window = &file[start..end];
+            let raw = lcs_diff(search, window, false);
+            let matched = raw.iter().filter(|(k, _, _)| *k == RowKind::Equal).count();
+            let score = (matched as f32 / search_len.max(1) as f32) * 100.0;
+            all_candidates.push((start, end, score));
+            if score > best_score {
+                best_score = score;
+                best_start = start;
+                best_end = end;
+                best_raw = raw;
+            }
+        }
+    }
+    let rows = build_rows(&best_raw, 1, best_start + 1);
+    all_candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    let mut candidates: Vec<(usize, usize, f32)> = Vec::new();
+    for (s, e, sc) in all_candidates {
+        if sc < 30.0 {
+            continue;
+        }
+        let overlaps = candidates.iter().any(|(rs, re, _)| s < *re && e > *rs);
+        if !overlaps {
+            candidates.push((s, e, sc));
+        }
+    }
+    candidates.truncate(20);
+    MatchResult {
+        score: best_score.clamp(0.0, 100.0),
+        file_start: best_start,
+        file_end: best_end,
+        rows,
+        candidates,
+    }
+}
 thread_local! {
     static MERGE_LAST_APPLIED_RANGE: RefCell<HashMap<String, (usize, usize)>> = RefCell::new(HashMap::new());
 }
@@ -311,47 +376,49 @@ impl Repl {
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
         let search = &hunk.search;
 
-        let mut candidates: Vec<(usize, usize)> = Vec::new();
-        // Minimum fraction of matching lines (relative to search block length)
-        // required for a window to be considered a real candidate. Keeps
-        // near-garbage overlaps (e.g. a single incidental blank-line match)
-        // out of the n/N candidate cycle.
-        const MIN_MATCH_RATIO: f64 = 0.4;
-        if !search.is_empty() && !file_lines.is_empty() {
-            let min_score = ((search.len() as f64) * MIN_MATCH_RATIO).ceil().max(1.0) as usize;
-            for i in 0..=file_lines.len().saturating_sub(search.len()) {
-                let mut score = 0;
-                for j in 0..search.len() {
-                    if i + j < file_lines.len()
-                        && file_lines[i + j].trim_end() == search[j].trim_end()
-                    {
-                        score += 1;
-                    }
-                }
-                if score >= min_score {
-                    candidates.push((i, score));
-                }
-            }
+        const NO_MATCH_IDX: usize = usize::MAX / 2;
+
+        if search.is_empty() || file_lines.is_empty() {
+            self.merge_candidates = Vec::new();
+            self.merge_candidate_idx = 0;
+            self.merge_match_idx = NO_MATCH_IDX;
+            self.merge_match_end = NO_MATCH_IDX;
+            self.merge_cursor = 0;
+            self.merge_file_scroll = 0;
+            return;
         }
-        candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-        let best_match_idx = candidates.first().map(|(i, _)| *i).unwrap_or(0);
-        let max_score = candidates.first().map(|(_, s)| *s).unwrap_or(0);
+        // Prefer the boundary-anchored window search from diff.rs: it
+        // correctly grows/shrinks the window when lines are inserted or
+        // deleted inside the match, instead of assuming a fixed length.
+        // But its head/tail anchors must match *exactly*, so on a short
+        // search block where the changed line falls inside the anchor
+        // region, it can reject every window and return zero candidates
+        // even though the block matches well overall. Fall back to a
+        // loose, score-only sliding window search in that case so we
+        // still surface a best-effort match instead of "match:none".
+        let mut result = crate::diff::find_best_match(search, &file_lines, false);
+        if result.candidates.is_empty() {
+            result = loose_best_match(search, &file_lines);
+        }
 
-        self.merge_candidates = candidates.into_iter().map(|(i, _)| i).collect();
+        self.merge_candidates = result
+            .candidates
+            .iter()
+            .map(|(s, e, _)| (*s, *e))
+            .collect();
         self.merge_candidate_idx = 0;
 
-        if max_score == 0 {
-            const NO_MATCH_IDX: usize = usize::MAX / 2;
+        if result.candidates.is_empty() || result.score <= 0.0 {
             self.merge_match_idx = NO_MATCH_IDX;
             self.merge_match_end = NO_MATCH_IDX;
             self.merge_cursor = 0;
             self.merge_file_scroll = 0;
         } else {
-            self.merge_match_idx = best_match_idx;
-            self.merge_match_end = best_match_idx + search.len().max(1);
-            self.merge_cursor = best_match_idx;
-            self.merge_file_scroll = best_match_idx.saturating_sub(2);
+            self.merge_match_idx = result.file_start;
+            self.merge_match_end = result.file_end;
+            self.merge_cursor = result.file_start;
+            self.merge_file_scroll = result.file_start.saturating_sub(2);
         }
     }
 
@@ -537,12 +604,11 @@ impl Repl {
                 } else {
                     self.merge_candidate_idx =
                         (self.merge_candidate_idx + 1) % self.merge_candidates.len();
-                    let idx = self.merge_candidates[self.merge_candidate_idx];
-                    let hunk = &self.pending_merge.as_ref().unwrap()[self.merge_index];
-                    self.merge_match_idx = idx;
-                    self.merge_match_end = idx + hunk.search.len().max(1);
-                    self.merge_cursor = idx;
-                    self.merge_file_scroll = idx.saturating_sub(2);
+                    let (start, end) = self.merge_candidates[self.merge_candidate_idx];
+                    self.merge_match_idx = start;
+                    self.merge_match_end = end;
+                    self.merge_cursor = start;
+                    self.merge_file_scroll = start.saturating_sub(2);
                     self.push_info(
                         format!(
                             "  ➡️ Candidate {}/{}",
