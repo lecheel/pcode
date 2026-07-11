@@ -36,12 +36,12 @@ impl Repl {
         self.push_llm_line("  dd (5dd)         → Delete line (5 lines)", LineStyle::Dim);
         self.push_llm_line("  p                → paste", LineStyle::Dim);
         self.push_llm_line("  u                → Undo line deletion", LineStyle::Dim);
-        self.push_llm_line("  o                → Open via $EDITOR", LineStyle::Tool);
         self.push_llm_line(
             "  >                → Visual Selection to >>llm",
             LineStyle::Tool,
         );
         self.push_llm_line("  l / L            → hunkNext/hunkPrev", LineStyle::Dim);
+        self.push_llm_line("  Ctrl-o           → Open via $EDITOR", LineStyle::Tool);
         self.push_llm_line("  Alt-d            → Delete line", LineStyle::Dim);
         self.push_llm_line("  Alt-w            → Write buffer", LineStyle::Dim);
         self.push_llm_line("  Alt-x            → Close buffer", LineStyle::Dim);

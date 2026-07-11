@@ -182,19 +182,46 @@ impl Repl {
                     .collect::<Vec<String>>()
                     .join("\n");
                 let hunks = crate::patch::parse_patches(&content);
-                let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                let valid_hunks: Vec<_> = hunks
+                    .into_iter()
+                    .filter(|h| !h.filename.trim().is_empty())
+                    .collect();
                 if !valid_hunks.is_empty() {
                     self.merge_buffer_apply = true;
                     self.start_merge(valid_hunks);
                 } else {
                     if content.contains("<<<<<<< SEARCH") || content.contains(">>>>>>> REPLACE") {
-                        self.push_info("  ❌ Invalid search/replace format: missing filename", LineStyle::Error);
+                        self.push_info(
+                            "  ❌ Invalid search/replace format: missing filename",
+                            LineStyle::Error,
+                        );
                         self.popup_mode = PopupMode::Message;
-                        self.popup.show("Error", vec![PopupItem { text: "Invalid search/replace format: missing filename".to_string(), is_active: true, id: None }], 0, PopupPosition::Center);
+                        self.popup.show(
+                            "Error",
+                            vec![PopupItem {
+                                text: "Invalid search/replace format: missing filename".to_string(),
+                                is_active: true,
+                                id: None,
+                            }],
+                            0,
+                            PopupPosition::Center,
+                        );
                     } else {
-                        self.push_info("  ❌ No patches found in current buffer.", LineStyle::Error);
+                        self.push_info(
+                            "  ❌ No patches found in current buffer.",
+                            LineStyle::Error,
+                        );
                         self.popup_mode = PopupMode::Message;
-                        self.popup.show("Error", vec![PopupItem { text: "No patches found in current buffer.".to_string(), is_active: true, id: None }], 0, PopupPosition::Center);
+                        self.popup.show(
+                            "Error",
+                            vec![PopupItem {
+                                text: "No patches found in current buffer.".to_string(),
+                                is_active: true,
+                                id: None,
+                            }],
+                            0,
+                            PopupPosition::Center,
+                        );
                     }
                     self.scroll_to_bottom();
                 }
@@ -295,15 +322,33 @@ impl Repl {
                     Ok(content) => {
                         if !content.trim().is_empty() {
                             let hunks = crate::patch::parse_patches(&content);
-                            let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                            let valid_hunks: Vec<_> = hunks
+                                .into_iter()
+                                .filter(|h| !h.filename.trim().is_empty())
+                                .collect();
                             if !valid_hunks.is_empty() {
                                 self.merge_buffer_apply = true;
                                 self.start_merge(valid_hunks);
                             } else {
-                                if content.contains("<<<<<<< SEARCH") || content.contains(">>>>>>> REPLACE") {
-                                    self.push_info("  ❌ Invalid search/replace format: missing filename", LineStyle::Error);
+                                if content.contains("<<<<<<< SEARCH")
+                                    || content.contains(">>>>>>> REPLACE")
+                                {
+                                    self.push_info(
+                                        "  ❌ Invalid search/replace format: missing filename",
+                                        LineStyle::Error,
+                                    );
                                     self.popup_mode = PopupMode::Message;
-                                    self.popup.show("Error", vec![PopupItem { text: "Invalid search/replace format: missing filename".to_string(), is_active: true, id: None }], 0, PopupPosition::Center);
+                                    self.popup.show(
+                                        "Error",
+                                        vec![PopupItem {
+                                            text: "Invalid search/replace format: missing filename"
+                                                .to_string(),
+                                            is_active: true,
+                                            id: None,
+                                        }],
+                                        0,
+                                        PopupPosition::Center,
+                                    );
                                 } else {
                                     self.pending_snippet = Some(content);
                                     self.push_info(

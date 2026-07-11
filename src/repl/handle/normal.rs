@@ -446,6 +446,9 @@ impl Repl {
                 KeyCode::Char('u') => self.half_page_up(),
                 KeyCode::Char('b') => self.half_page_up(),
                 KeyCode::Char('f') => self.half_page_down(),
+                KeyCode::Char('o') => {
+                    self.open_external_editor(stdout)?;
+                }
                 _ => {}
             }
             self.count = None;
@@ -484,57 +487,28 @@ impl Repl {
                 self.count = None;
             }
             KeyCode::Char('o') => {
-                let buffer_name = self.buffer().name().to_string();
-                if !buffer_name.is_empty()
-                    && buffer_name != "Chat"
-                    && buffer_name != "Console"
-                    && buffer_name != "rg"
-                    && buffer_name != "fd"
-                    && buffer_name != "GitStatus"
-                {
-                    let root = std::path::PathBuf::from(&self.config.tools.project_root);
-                    let raw_path = std::path::Path::new(&buffer_name);
-                    let resolved = if raw_path.is_absolute() {
-                        raw_path.to_path_buf()
-                    } else {
-                        root.join(&buffer_name)
-                    };
-                    let line_num = self.buffer().cursor_line() + 1;
-                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-
-                    let _ = terminal::disable_raw_mode();
-                    let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
-                    let _ = stdout.flush();
-
-                    let mut cmd = std::process::Command::new(&editor);
-                    if editor == "code" || editor == "cursor" {
-                        cmd.arg("-g")
-                            .arg(format!("{}:{}", resolved.display(), line_num));
-                    } else {
-                        cmd.arg(format!("+{}", line_num)).arg(&resolved);
-                    }
-
-                    match cmd.status() {
-                        Ok(_) => {
-                            if let Ok(content) = std::fs::read_to_string(&resolved) {
-                                self.buffer_mut().clear();
-                                self.buffer_mut().push_str(&content, LineStyle::Plain);
-                                if line_num - 1 < self.buffer().len() {
-                                    self.buffer_mut().set_cursor(line_num - 1, 0);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            self.push_info(
-                                format!("  ❌ Failed to open editor: {}", e),
-                                LineStyle::Error,
-                            );
-                        }
-                    }
-
-                    let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
-                    let _ = terminal::enable_raw_mode();
-                    self.ensure_cursor_visible();
+                let cursor_line = self.buffer().cursor_line();
+                self.buffer_mut().insert_lines(
+                    cursor_line + 1,
+                    &[BufferLine::new(String::new(), LineStyle::Plain)],
+                );
+                self.buffer_mut().set_cursor(cursor_line + 1, 0);
+                let buf_name = self.buffer().name().to_string();
+                if !buf_name.is_empty() && buf_name != "Chat" && buf_name != "Console" {
+                    self.modified_buffers.insert(buf_name);
+                }
+                self.count = None;
+            }
+            KeyCode::Char('O') => {
+                let cursor_line = self.buffer().cursor_line();
+                self.buffer_mut().insert_lines(
+                    cursor_line,
+                    &[BufferLine::new(String::new(), LineStyle::Plain)],
+                );
+                self.buffer_mut().set_cursor(cursor_line, 0);
+                let buf_name = self.buffer().name().to_string();
+                if !buf_name.is_empty() && buf_name != "Chat" && buf_name != "Console" {
+                    self.modified_buffers.insert(buf_name);
                 }
                 self.count = None;
             }
@@ -705,12 +679,18 @@ impl Repl {
                             .collect::<Vec<String>>()
                             .join("\n");
                         let hunks = crate::patch::parse_patches(&content);
-                        let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                        let valid_hunks: Vec<_> = hunks
+                            .into_iter()
+                            .filter(|h| !h.filename.trim().is_empty())
+                            .collect();
                         if !valid_hunks.is_empty() {
                             self.merge_buffer_apply = true;
                             self.start_merge(valid_hunks);
                         } else {
-                            self.push_info("  ❌ No valid patches with filenames found in current buffer.", LineStyle::Error);
+                            self.push_info(
+                                "  ❌ No valid patches with filenames found in current buffer.",
+                                LineStyle::Error,
+                            );
                             self.scroll_to_bottom();
                         }
                     }
@@ -867,7 +847,10 @@ impl Repl {
                             Ok(content) => {
                                 if !content.trim().is_empty() {
                                     let hunks = crate::patch::parse_patches(&content);
-                                    let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                                    let valid_hunks: Vec<_> = hunks
+                                        .into_iter()
+                                        .filter(|h| !h.filename.trim().is_empty())
+                                        .collect();
                                     if !valid_hunks.is_empty() {
                                         self.merge_buffer_apply = true;
                                         self.start_merge(valid_hunks);
@@ -882,7 +865,10 @@ impl Repl {
                                 }
                             }
                             Err(e) => {
-                                self.push_info(format!("  ❌ Clipboard Error: {}", e), LineStyle::Error);
+                                self.push_info(
+                                    format!("  ❌ Clipboard Error: {}", e),
+                                    LineStyle::Error,
+                                );
                                 self.scroll_to_bottom();
                             }
                         }
@@ -1024,6 +1010,62 @@ impl Repl {
         }
         self.clear_pending();
         self.render(stdout)
+    }
+
+    fn open_external_editor(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        let buffer_name = self.buffer().name().to_string();
+        if !buffer_name.is_empty()
+            && buffer_name != "Chat"
+            && buffer_name != "Console"
+            && buffer_name != "rg"
+            && buffer_name != "fd"
+            && buffer_name != "GitStatus"
+        {
+            let root = std::path::PathBuf::from(&self.config.tools.project_root);
+            let raw_path = std::path::Path::new(&buffer_name);
+            let resolved = if raw_path.is_absolute() {
+                raw_path.to_path_buf()
+            } else {
+                root.join(&buffer_name)
+            };
+            let line_num = self.buffer().cursor_line() + 1;
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+            let _ = terminal::disable_raw_mode();
+            let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
+            let _ = stdout.flush();
+
+            let mut cmd = std::process::Command::new(&editor);
+            if editor == "code" || editor == "cursor" {
+                cmd.arg("-g")
+                    .arg(format!("{}:{}", resolved.display(), line_num));
+            } else {
+                cmd.arg(format!("+{}", line_num)).arg(&resolved);
+            }
+
+            match cmd.status() {
+                Ok(_) => {
+                    if let Ok(content) = std::fs::read_to_string(&resolved) {
+                        self.buffer_mut().clear();
+                        self.buffer_mut().push_str(&content, LineStyle::Plain);
+                        if line_num - 1 < self.buffer().len() {
+                            self.buffer_mut().set_cursor(line_num - 1, 0);
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.push_info(
+                        format!("  ❌ Failed to open editor: {}", e),
+                        LineStyle::Error,
+                    );
+                }
+            }
+
+            let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
+            let _ = terminal::enable_raw_mode();
+            self.ensure_cursor_visible();
+        }
+        Ok(())
     }
 
     fn get_word_under_cursor(&self) -> Option<String> {

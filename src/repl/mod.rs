@@ -838,7 +838,7 @@ impl Repl {
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
             segments.push((" │ ".to_string(), Color::Grey));
-            segments.push(("[o] EDITOR [Ins] PastePatchCode".to_string(), Color::Cyan));
+            segments.push(("[C-o] EDITOR [Ins] PastePatchCode".to_string(), Color::Cyan));
             if !git_info.is_empty() {
                 segments.push((git_info, Color::Green));
             }
@@ -915,8 +915,13 @@ impl Repl {
             let y_l1 = y_bot.saturating_sub(1);
             let y_top = y_l1.saturating_sub(1);
             let inner_w = (box_w as usize).saturating_sub(2);
-            
-            let msg = self.popup.items.first().map(|i| i.text.as_str()).unwrap_or("");
+
+            let msg = self
+                .popup
+                .items
+                .first()
+                .map(|i| i.text.as_str())
+                .unwrap_or("");
             let msg_disp = if UnicodeWidthStr::width(msg) > inner_w {
                 let mut s = String::new();
                 let mut w = 0;
@@ -934,7 +939,7 @@ impl Repl {
             };
             let current_w = UnicodeWidthStr::width(msg_disp.as_str());
             let pad_str = " ".repeat(inner_w.saturating_sub(current_w));
-            
+
             queue!(
                 stdout,
                 SetForegroundColor(Color::DarkYellow),
