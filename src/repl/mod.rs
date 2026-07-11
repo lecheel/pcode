@@ -904,7 +904,7 @@ impl Repl {
             }
         }
 
-        if self.fkey_help {
+        if self.fkey_help && self.mode != Mode::Merge {
             let term_w = self.term_width() as u16;
             let margin = 2;
             let box_w = term_w.saturating_sub(margin * 2);
