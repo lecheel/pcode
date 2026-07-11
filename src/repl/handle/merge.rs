@@ -34,6 +34,14 @@ fn pop_undo(filename: &str) -> Option<String> {
 fn undo_stack_len(filename: &str) -> usize {
     MERGE_UNDO_STACK.with(|s| s.borrow().get(filename).map(|v| v.len()).unwrap_or(0))
 }
+/// True if any file still has undoable history. Used as a "smart dirty"
+/// check: `merge_applied`/`modified_buffers` flags can remain stale/true
+/// even after the user has undone every change back to the original
+/// on-disk content, in which case there is nothing left to lose and we
+/// should still allow quitting.
+fn any_undo_available() -> bool {
+    MERGE_UNDO_STACK.with(|s| s.borrow().values().any(|v| !v.is_empty()))
+}
 /// Fallback for when `find_best_match`'s strict head/tail boundary
 /// requirement rejects every candidate window (common on short search
 /// blocks where the differing line falls inside the anchor region).
@@ -432,6 +440,96 @@ impl Repl {
             self.mode = Mode::Insert;
             return Ok(());
         }
+
+        let is_ctrl_o =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o');
+        let is_alt_w = (key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::META))
+            && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W'));
+        let is_alt_x = (key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::META))
+            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'));
+        let is_alt_d = (key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::META))
+            && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D'));
+        let is_alt_q = (key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::META))
+            && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT)
+            || key.modifiers.contains(KeyModifiers::META)
+        {
+            if !is_ctrl_o && !is_alt_w && !is_alt_x && !is_alt_d && !is_alt_q {
+                self.render(stdout)?;
+                return Ok(());
+            }
+        }
+
+        if is_alt_q {
+            let has_applied = self.merge_applied.iter().any(|&x| x);
+            let has_modified = !self.modified_buffers.is_empty();
+            let dirty = (has_applied || has_modified) && any_undo_available();
+            if !dirty {
+                self.editor.save_history(&self.config.repl.history_file);
+                self.cmd_editor
+                    .save_history(&self.config.repl.command_history_file);
+                if let Some(handle) = self.agent_handle.take() {
+                    handle.abort();
+                }
+                return Err(anyhow::anyhow!("__QUIT__"));
+            } else {
+                self.push_info(
+                    "  ⚠️ Cannot quit. Pending changes. Press 'q' to exit merge mode, or Alt-w to save.",
+                    LineStyle::Error,
+                );
+                self.render(stdout)?;
+                return Ok(());
+            }
+        }
+        if is_ctrl_o {
+            let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+            let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+            let file_path = project_root.join(&hunk.filename);
+            let line_num = self.merge_cursor + 1;
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+            let _ = terminal::disable_raw_mode();
+            let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
+            let _ = stdout.flush();
+
+            let mut cmd = std::process::Command::new(&editor);
+            if editor == "code" || editor == "cursor" {
+                cmd.arg("-g")
+                    .arg(format!("{}:{}", file_path.display(), line_num));
+            } else {
+                cmd.arg(format!("+{}", line_num)).arg(&file_path);
+            }
+
+            match cmd.status() {
+                Ok(_) => {
+                    if let Ok(content) = std::fs::read_to_string(&file_path) {
+                        if let Some(idx) =
+                            self.buffers.iter().position(|b| b.name() == hunk.filename)
+                        {
+                            self.buffers[idx].clear();
+                            self.buffers[idx].push_str(&content, LineStyle::Plain);
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.push_info(
+                        format!("  ❌ Failed to open editor: {}", e),
+                        LineStyle::Error,
+                    );
+                }
+            }
+
+            let _ = execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide);
+            let _ = terminal::enable_raw_mode();
+            self.render(stdout)?;
+            return Ok(());
+        }
+
         if self.fkey_help {
             self.fkey_help = false;
             self.render(stdout)?;
@@ -822,13 +920,37 @@ impl Repl {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
-                let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
-                push_undo(&hunk.filename, &file_content);
-                self.merge_last_modified = Some((hunk.filename.clone(), false));
-                let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+                
+                let buf_idx = self.buffers.iter().position(|b| b.name() == hunk.filename);
+                let is_buffer = self.merge_buffer_apply || buf_idx.is_some();
+                
+                let old_content = if let Some(idx) = buf_idx {
+                    self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<_>>().join("\n")
+                } else {
+                    std::fs::read_to_string(&file_path).unwrap_or_default()
+                };
+                
+                push_undo(&hunk.filename, &old_content);
+                self.merge_last_modified = Some((hunk.filename.clone(), is_buffer));
+                
+                let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
-                std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
+                let new_content = file_lines.join("\n") + "\n";
+                
+                if let Some(idx) = buf_idx {
+                    self.buffers[idx].clear();
+                    self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+                } else if self.merge_buffer_apply {
+                    let idx = self.buffers.len();
+                    self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
+                    self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+                }
+                
+                if !self.merge_buffer_apply {
+                    std::fs::write(&file_path, &new_content)?;
+                }
+                self.modified_buffers.insert(hunk.filename.clone());
 
                 if self.merge_cursor < self.merge_match_idx {
                     self.merge_match_idx += 1;
@@ -838,20 +960,45 @@ impl Repl {
                 }
                 self.merge_cursor = line_idx;
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::META) =>
+            {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
-                let file_content = std::fs::read_to_string(&file_path).unwrap_or_default();
-
-                let mut file_lines: Vec<String> = file_content.lines().map(String::from).collect();
-
+                
+                let buf_idx = self.buffers.iter().position(|b| b.name() == hunk.filename);
+                let is_buffer = self.merge_buffer_apply || buf_idx.is_some();
+                
+                let old_content = if let Some(idx) = buf_idx {
+                    self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<_>>().join("\n")
+                } else {
+                    std::fs::read_to_string(&file_path).unwrap_or_default()
+                };
+                
+                let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
                 if !file_lines.is_empty() {
-                    push_undo(&hunk.filename, &file_content);
-                    self.merge_last_modified = Some((hunk.filename.clone(), false));
+                    push_undo(&hunk.filename, &old_content);
+                    self.merge_last_modified = Some((hunk.filename.clone(), is_buffer));
+                    
                     let line_idx = self.merge_cursor.min(file_lines.len() - 1);
                     file_lines.remove(line_idx);
-                    std::fs::write(&file_path, file_lines.join("\n") + "\n")?;
+                    let new_content = file_lines.join("\n") + "\n";
+                    
+                    if let Some(idx) = buf_idx {
+                        self.buffers[idx].clear();
+                        self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+                    } else if self.merge_buffer_apply {
+                        let idx = self.buffers.len();
+                        self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
+                        self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+                    }
+                    
+                    if !self.merge_buffer_apply {
+                        std::fs::write(&file_path, &new_content)?;
+                    }
+                    self.modified_buffers.insert(hunk.filename.clone());
 
                     if self.merge_match_idx > line_idx {
                         self.merge_match_idx = self.merge_match_idx.saturating_sub(1);
@@ -875,6 +1022,9 @@ impl Repl {
                     .unwrap_or((hunk_filename.clone(), self.merge_buffer_apply));
                 if let Some(undo_content) = pop_undo(&target_file) {
                     clear_last_applied_range(&target_file);
+                    let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let file_path = project_root.join(&target_file);
+
                     if was_buffer {
                         let buf_idx = if let Some(idx) =
                             self.buffers.iter().position(|b| b.name() == target_file)
@@ -891,9 +1041,6 @@ impl Repl {
                             format!("  ↩️ Undo successful for {} (buffer).", target_file),
                             LineStyle::Info,
                         );
-                        let project_root =
-                            std::path::PathBuf::from(&self.config.tools.project_root);
-                        let file_path = project_root.join(&target_file);
                         let disk_content = std::fs::read_to_string(&file_path).unwrap_or_default();
                         let buf_content = self.buffers[buf_idx]
                             .lines()
@@ -905,9 +1052,6 @@ impl Repl {
                             self.modified_buffers.remove(&target_file);
                         }
                     } else {
-                        let project_root =
-                            std::path::PathBuf::from(&self.config.tools.project_root);
-                        let file_path = project_root.join(&target_file);
                         std::fs::write(&file_path, &undo_content)?;
                         self.push_info(
                             format!("  ↩️ Undo successful for {} (disk).", target_file),
@@ -934,10 +1078,47 @@ impl Repl {
                             }
                         }
                     }
-                    if hunk_filename == target_file && !was_buffer {
+
+                    if hunk_filename == target_file {
                         let old_cursor = self.merge_cursor;
+                        let old_match_idx = self.merge_match_idx;
                         self.calc_merge_file_scroll();
-                        self.merge_cursor = old_cursor;
+                        let new_match_idx = self.merge_match_idx;
+
+                        if old_match_idx != usize::MAX / 2 && new_match_idx != usize::MAX / 2 {
+                            let diff = new_match_idx as i64 - old_match_idx as i64;
+                            self.merge_cursor = (old_cursor as i64 + diff).max(0) as usize;
+                        } else if new_match_idx != usize::MAX / 2 {
+                            if old_cursor == 0 {
+                                self.merge_cursor = new_match_idx;
+                            } else {
+                                self.merge_cursor = old_cursor;
+                            }
+                        } else {
+                            self.merge_cursor = old_cursor;
+                        }
+
+                        let content = if was_buffer {
+                            self.buffers
+                                .iter()
+                                .find(|b| b.name() == target_file)
+                                .map(|b| {
+                                    b.lines()
+                                        .iter()
+                                        .map(|l| l.content().clone())
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            std::fs::read_to_string(&file_path).unwrap_or_default()
+                        };
+                        let file_lines: Vec<String> = content.lines().map(String::from).collect();
+                        if self.merge_cursor >= file_lines.len() && !file_lines.is_empty() {
+                            self.merge_cursor = file_lines.len() - 1;
+                        } else if file_lines.is_empty() {
+                            self.merge_cursor = 0;
+                        }
                     }
                 } else {
                     self.push_info("  Nothing to undo.", LineStyle::Error);

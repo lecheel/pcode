@@ -440,6 +440,15 @@ impl Repl {
         }
 
         let amount = self.count.unwrap_or(1);
+        if (key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META))
+            && (key.code == KeyCode::Char('d') || key.code == KeyCode::Char('D'))
+        {
+            self.do_dd(amount)?;
+            self.count = None;
+            self.clear_pending();
+            self.render(stdout)?;
+            return Ok(());
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('d') => self.half_page_down(),
