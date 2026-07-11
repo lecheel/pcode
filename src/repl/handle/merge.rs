@@ -327,8 +327,10 @@ impl Repl {
         };
         3 + search_len + replace_len
     }
-    pub fn start_merge(&mut self, hunks: Vec<PatchHunk>) {
+    pub fn start_merge(&mut self, mut hunks: Vec<PatchHunk>) {
+        hunks.retain(|h| !h.filename.trim().is_empty());
         if hunks.is_empty() {
+            self.push_info("  ❌ No valid patches with filenames found.", LineStyle::Error);
             return;
         }
         for h in &hunks {

@@ -704,14 +704,12 @@ impl Repl {
                             .collect::<Vec<String>>()
                             .join("\n");
                         let hunks = crate::patch::parse_patches(&content);
-                        if !hunks.is_empty() {
+                        let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                        if !valid_hunks.is_empty() {
                             self.merge_buffer_apply = true;
-                            self.start_merge(hunks);
+                            self.start_merge(valid_hunks);
                         } else {
-                            self.push_info(
-                                "  ❌ No patches found in current buffer.",
-                                LineStyle::Error,
-                            );
+                            self.push_info("  ❌ No valid patches with filenames found in current buffer.", LineStyle::Error);
                             self.scroll_to_bottom();
                         }
                     }
@@ -868,9 +866,10 @@ impl Repl {
                             Ok(content) => {
                                 if !content.trim().is_empty() {
                                     let hunks = crate::patch::parse_patches(&content);
-                                    if !hunks.is_empty() {
+                                    let valid_hunks: Vec<_> = hunks.into_iter().filter(|h| !h.filename.trim().is_empty()).collect();
+                                    if !valid_hunks.is_empty() {
                                         self.merge_buffer_apply = true;
-                                        self.start_merge(hunks);
+                                        self.start_merge(valid_hunks);
                                     } else {
                                         self.pending_snippet = Some(content);
                                         self.push_info(
@@ -882,10 +881,7 @@ impl Repl {
                                 }
                             }
                             Err(e) => {
-                                self.push_info(
-                                    format!("  ❌ Clipboard Error: {}", e),
-                                    LineStyle::Error,
-                                );
+                                self.push_info(format!("  ❌ Clipboard Error: {}", e), LineStyle::Error);
                                 self.scroll_to_bottom();
                             }
                         }

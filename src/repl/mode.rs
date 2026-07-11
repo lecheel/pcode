@@ -15,7 +15,7 @@ impl Mode {
     pub fn as_str(&self) -> &'static str {
         match self {
             Mode::Normal => "NORMAL",
-            Mode::Insert => "INSERT",
+            Mode::Insert => "LLM",
             Mode::Command => "COMMAND",
             Mode::Search => "SEARCH",
             Mode::Visual => "VISUAL",
