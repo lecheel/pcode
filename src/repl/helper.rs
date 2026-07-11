@@ -622,11 +622,30 @@ impl super::Repl {
                 is_active: false,
                 id: None,
             }],
-            ',' => vec![PopupItem {
-                text: "g → git".to_string(),
-                is_active: false,
-                id: None,
-            }],
+            ',' => vec![
+                PopupItem {
+                    text: "g → git".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+                PopupItem {
+                    text: "p → paste/patch".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+            ],
+            'P' => vec![
+                PopupItem {
+                    text: "p → paste from clipboard".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+                PopupItem {
+                    text: "l → load patches from buffer".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+            ],
             'g' => vec![PopupItem {
                 text: "g → go to top".to_string(),
                 is_active: false,

@@ -694,6 +694,30 @@ impl Repl {
                 }
             }
             KeyCode::Char('l') => {
+                if self.pending == Some('P') {
+                    if !self.waiting {
+                        let content: String = self
+                            .buffer()
+                            .lines()
+                            .iter()
+                            .map(|l| l.content())
+                            .collect::<Vec<String>>()
+                            .join("\n");
+                        let hunks = crate::patch::parse_patches(&content);
+                        if !hunks.is_empty() {
+                            self.merge_buffer_apply = true;
+                            self.start_merge(hunks);
+                        } else {
+                            self.push_info("  ❌ No patches found in current buffer.", LineStyle::Error);
+                            self.scroll_to_bottom();
+                        }
+                    }
+                    self.clear_pending();
+                    self.count = None;
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+
                 if let Some(lines) = self.get_git_gutter_lines() {
                     if !lines.is_empty() {
                         let current_line = self.buffer().cursor_line() + 1;
@@ -824,6 +848,46 @@ impl Repl {
                     self.revert_current_hunk()?;
                     self.clear_pending();
                     self.count = None;
+                } else {
+                    self.clear_pending();
+                    self.count = None;
+                }
+            }
+            KeyCode::Char('p') => {
+                if self.pending == Some(',') {
+                    self.pending = Some('P');
+                    self.show_which_key_popup('P');
+                    self.render(stdout)?;
+                    return Ok(());
+                } else if self.pending == Some('P') {
+                    if !self.waiting {
+                        match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                            Ok(content) => {
+                                if !content.trim().is_empty() {
+                                    let hunks = crate::patch::parse_patches(&content);
+                                    if !hunks.is_empty() {
+                                        self.merge_buffer_apply = true;
+                                        self.start_merge(hunks);
+                                    } else {
+                                        self.pending_snippet = Some(content);
+                                        self.push_info(
+                                            "  📋 Pasted snippet. Press 'i' and type your prompt:",
+                                            LineStyle::Dim,
+                                        );
+                                        self.scroll_to_bottom();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.push_info(format!("  ❌ Clipboard Error: {}", e), LineStyle::Error);
+                                self.scroll_to_bottom();
+                            }
+                        }
+                    }
+                    self.clear_pending();
+                    self.count = None;
+                    self.render(stdout)?;
+                    return Ok(());
                 } else {
                     self.clear_pending();
                     self.count = None;
