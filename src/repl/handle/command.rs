@@ -1082,6 +1082,7 @@ impl Repl {
             ("gg", "Go to top"),
             ("yy", "Yank line to clipboard"),
             ("dd (5dd)", "Delete line (5 lines)"),
+            ("p", "paste"),
             ("u", "Undo line deletion"),
             ("o", "Open in $EDITOR"),
             ("l / L", "Next / Previous git hunk"),
