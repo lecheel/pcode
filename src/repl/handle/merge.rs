@@ -1169,7 +1169,7 @@ impl Repl {
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [a]pply [r]ecalc [l]nextHunk [n]nextCandidate [u]ndo [q]uit [Tab]panel [ma/mA]set [Enter]search "),
+            Print("  [a]pply [r]ecalc [l]next [n]cand [u]ndo [q]uit [Tab]panel [-/=]adjust [ma/mA]set [Enter]search "),
             style::ResetColor
         )?;
         let start_y = 1;
