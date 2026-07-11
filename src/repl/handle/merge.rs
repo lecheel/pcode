@@ -427,6 +427,11 @@ impl Repl {
             self.mode = Mode::Insert;
             return Ok(());
         }
+        if self.fkey_help {
+            self.fkey_help = false;
+            self.render(stdout)?;
+            return Ok(());
+        }
         if self.pending == Some('m') {
             self.pending = None;
             match key.code {
@@ -1175,72 +1180,6 @@ impl Repl {
             Print("  [?] Help [a]pply [l]next "),
             style::ResetColor
         )?;
-        if self.fkey_help {
-            let term_w = self.term_width() as u16;
-            let margin = 2;
-            let box_w = term_w.saturating_sub(margin * 2);
-            let x = margin;
-            let y_bot = self.height.saturating_sub(3);
-            let y_l2 = y_bot.saturating_sub(1);
-            let y_l1 = y_l2.saturating_sub(1);
-            let y_top = y_l1.saturating_sub(1);
-            let inner_w = (box_w as usize).saturating_sub(2);
-            let pad = |s: &str| -> String {
-                let current_w = UnicodeWidthStr::width(s);
-                if current_w < inner_w {
-                    format!("{}{}", s, " ".repeat(inner_w - current_w))
-                } else {
-                    s.to_string()
-                }
-            };
-            let pad_item = |s: &str| -> String {
-                let target_w = 14;
-                let w = UnicodeWidthStr::width(s);
-                if w < target_w {
-                    format!("{}{}", s, " ".repeat(target_w - w))
-                } else {
-                    s.to_string()
-                }
-            };
-            let line1_str = format!(
-                "{}{}{}{}{}{}{}",
-                pad_item(" a: Apply"),
-                pad_item(" l: Next Hunk"),
-                pad_item(" r: Recalc"),
-                pad_item(" n: Next Cand"),
-                pad_item(" u: Undo"),
-                pad_item(" q: Quit"),
-                pad_item(" ?: Toggle Help")
-            );
-            let line2_str = format!(
-                "{}{}{}{}{}{}{}",
-                pad_item(" Tab: Panel"),
-                pad_item(" -: Shrink"),
-                pad_item(" =: Expand"),
-                pad_item(" ma: Mark S"),
-                pad_item(" mA: Mark E"),
-                pad_item(" Ent: Search"),
-                pad_item("  *: --NA")
-            );
-            let l1 = pad(&line1_str);
-            let l2 = pad(&line2_str);
-            queue!(
-                stdout,
-                SetForegroundColor(Color::Yellow),
-                SetAttribute(Attribute::Bold),
-                cursor::MoveTo(x, y_top),
-                Print(format!("╭{}╮", "─".repeat(inner_w))),
-                cursor::MoveTo(x, y_bot),
-                Print(format!("╰{}╯", "─".repeat(inner_w))),
-                cursor::MoveTo(x, y_l1),
-                Print(format!("│{}│", l1)),
-                cursor::MoveTo(x, y_l2),
-                Print(format!("│{}│", l2)),
-                style::ResetColor,
-                SetAttribute(Attribute::Reset),
-                cursor::Hide
-            )?;
-        }
         let start_y = 1;
         let visible_height = hint_y as usize - start_y;
         let max_scroll = right_rows.len().saturating_sub(visible_height);
@@ -1403,7 +1342,72 @@ impl Repl {
                 )?;
             }
         }
-
+        if self.fkey_help {
+            let term_w = self.term_width() as u16;
+            let margin = 2;
+            let box_w = term_w.saturating_sub(margin * 2);
+            let x = margin;
+            let y_bot = self.height.saturating_sub(3);
+            let y_l2 = y_bot.saturating_sub(1);
+            let y_l1 = y_l2.saturating_sub(1);
+            let y_top = y_l1.saturating_sub(1);
+            let inner_w = (box_w as usize).saturating_sub(2);
+            let pad = |s: &str| -> String {
+                let current_w = UnicodeWidthStr::width(s);
+                if current_w < inner_w {
+                    format!("{}{}", s, " ".repeat(inner_w - current_w))
+                } else {
+                    s.to_string()
+                }
+            };
+            let pad_item = |s: &str| -> String {
+                let target_w = 14;
+                let w = UnicodeWidthStr::width(s);
+                if w < target_w {
+                    format!("{}{}", s, " ".repeat(target_w - w))
+                } else {
+                    s.to_string()
+                }
+            };
+            let line1_str = format!(
+                "{}{}{}{}{}{}{}",
+                pad_item(" a: Apply"),
+                pad_item(" l: Next Hunk"),
+                pad_item(" r: Recalc"),
+                pad_item(" n: Next Cand"),
+                pad_item(" u: Undo"),
+                pad_item(" q: Quit"),
+                pad_item(" ?: Toggle Help")
+            );
+            let line2_str = format!(
+                "{}{}{}{}{}{}{}",
+                pad_item(" Tab: Panel"),
+                pad_item(" -: Shrink"),
+                pad_item(" =: Expand"),
+                pad_item(" ma: Mark S"),
+                pad_item(" mA: Mark E"),
+                pad_item(" Ent: Search"),
+                pad_item(" o: Open Line")
+            );
+            let l1 = pad(&line1_str);
+            let l2 = pad(&line2_str);
+            queue!(
+                stdout,
+                SetForegroundColor(Color::Yellow),
+                SetAttribute(Attribute::Bold),
+                cursor::MoveTo(x, y_top),
+                Print(format!("╭{}╮", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_bot),
+                Print(format!("╰{}╯", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_l1),
+                Print(format!("│{}│", l1)),
+                cursor::MoveTo(x, y_l2),
+                Print(format!("│{}│", l2)),
+                style::ResetColor,
+                SetAttribute(Attribute::Reset),
+                cursor::Hide
+            )?;
+        }
         Ok(())
     }
 }
