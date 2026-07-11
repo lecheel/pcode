@@ -90,18 +90,23 @@ pub struct VisualRow {
 }
 
 #[derive(Debug, Clone)]
-struct UndoDelete {
-    index: usize,
-    lines: Vec<BufferLine>,
+enum UndoAction {
+    Delete {
+        index: usize,
+        lines: Vec<BufferLine>,
+    },
+    Insert {
+        index: usize,
+        count: usize,
+    },
 }
-
 pub struct ResponseBuffer {
     name: String,
     lines: Vec<BufferLine>,
     visual_scroll: usize,
     cursor_line: usize,
     cursor_col: usize,
-    undo_stack: Vec<UndoDelete>,
+    undo_stack: Vec<UndoAction>,
 }
 impl ResponseBuffer {
     pub fn new() -> Self {
@@ -305,10 +310,24 @@ impl ResponseBuffer {
             self.cursor_col = 0;
         }
     }
+    pub fn insert_lines(&mut self, index: usize, lines: &[BufferLine]) {
+        if index > self.lines.len() {
+            return;
+        }
+        let count = lines.len();
+        for (i, line) in lines.iter().enumerate() {
+            self.lines.insert(index + i, line.clone());
+        }
+        self.undo_stack.push(UndoAction::Insert { index, count });
+        if self.cursor_line >= self.lines.len() {
+            self.cursor_line = self.lines.len().saturating_sub(1);
+        }
+        self.clamp_cursor_col();
+    }
     pub fn remove_lines(&mut self, start: usize, end: usize) {
         if start < end && end <= self.lines.len() {
             let removed: Vec<BufferLine> = self.lines.drain(start..end).collect();
-            self.undo_stack.push(UndoDelete {
+            self.undo_stack.push(UndoAction::Delete {
                 index: start,
                 lines: removed,
             });
@@ -320,15 +339,29 @@ impl ResponseBuffer {
     }
     pub fn undo(&mut self) -> bool {
         if let Some(action) = self.undo_stack.pop() {
-            let UndoDelete { index, lines } = action;
-            if index <= self.lines.len() {
-                self.cursor_line = index;
-                self.cursor_col = 0;
-                for (i, line) in lines.into_iter().enumerate() {
-                    self.lines.insert(index + i, line);
+            match action {
+                UndoAction::Delete { index, lines } => {
+                    if index <= self.lines.len() {
+                        self.cursor_line = index;
+                        self.cursor_col = 0;
+                        for (i, line) in lines.into_iter().enumerate() {
+                            self.lines.insert(index + i, line);
+                        }
+                        self.clamp_cursor_col();
+                        return true;
+                    }
                 }
-                self.clamp_cursor_col();
-                return true;
+                UndoAction::Insert { index, count } => {
+                    let end = (index + count).min(self.lines.len());
+                    if index < end {
+                        self.lines.drain(index..end);
+                        self.cursor_line = index
+                            .saturating_sub(1)
+                            .min(self.lines.len().saturating_sub(1));
+                        self.clamp_cursor_col();
+                        return true;
+                    }
+                }
             }
         }
         false

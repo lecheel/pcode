@@ -551,7 +551,7 @@ impl Repl {
             if current_line_num >= new_start && current_line_num <= end {
                 let start_idx = new_start.saturating_sub(1);
                 let end_idx = start_idx + new_lines;
-                
+
                 let mut reverted_lines = Vec::new();
                 let mut i = 0;
                 while let Ok(line) = patch.line_in_hunk(h, i) {
@@ -569,7 +569,7 @@ impl Repl {
                     }
                     i += 1;
                 }
-                
+
                 let current_lines: Vec<String> = self
                     .buffer()
                     .lines()
@@ -583,15 +583,15 @@ impl Repl {
                 if end_idx < current_lines.len() {
                     updated_lines.extend_from_slice(&current_lines[end_idx..]);
                 }
-                
+
                 self.buffer_mut().clear();
                 let new_content = updated_lines.join("\n");
                 self.buffer_mut().push_str(&new_content, LineStyle::Plain);
-                
+
                 let new_cursor = safe_start.min(updated_lines.len().saturating_sub(1));
                 self.buffer_mut().set_cursor(new_cursor, 0);
                 self.ensure_cursor_visible();
-                
+
                 self.push_info("  ↩️ Reverted current hunk", LineStyle::Info);
                 return Ok(());
             }

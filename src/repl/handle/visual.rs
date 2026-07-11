@@ -124,6 +124,16 @@ impl Repl {
             let is_line_wise = matches!(self.mode, Mode::VisualLine);
             let text = self.extract_text(start, end, is_line_wise);
             if !text.is_empty() {
+                self.yank_register.clear();
+                if is_line_wise {
+                    let (sl, _) = if start <= end { start } else { end };
+                    let (el, _) = if start <= end { end } else { start };
+                    for i in sl..=el {
+                        if let Some(line) = self.buffer().lines().get(i) {
+                            self.yank_register.push(line.clone());
+                        }
+                    }
+                }
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
                     Ok(_) => self.push_info(
                         "  📋 Yanked selection to clipboard".to_string(),
@@ -144,6 +154,16 @@ impl Repl {
             let is_line_wise = matches!(self.mode, Mode::VisualLine);
             let text = self.extract_text(start, end, is_line_wise);
             if !text.is_empty() {
+                self.yank_register.clear();
+                if is_line_wise {
+                    let (sl, _) = if start <= end { start } else { end };
+                    let (el, _) = if start <= end { end } else { start };
+                    for i in sl..=el {
+                        if let Some(line) = self.buffer().lines().get(i) {
+                            self.yank_register.push(line.clone());
+                        }
+                    }
+                }
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
                     Ok(_) => {}
                     Err(e) => {

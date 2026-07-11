@@ -129,6 +129,7 @@ pub struct Repl {
     pub(crate) gdiff_scroll: usize,
     pub(crate) gdiff_cursor: usize,
     pub(crate) file_picker: Option<FilePickerState>,
+    pub(crate) yank_register: Vec<BufferLine>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -208,6 +209,7 @@ impl Repl {
             gdiff_scroll: 0,
             gdiff_cursor: 0,
             file_picker: None,
+            yank_register: Vec::new(),
         }
     }
 

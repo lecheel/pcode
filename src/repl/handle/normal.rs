@@ -708,7 +708,10 @@ impl Repl {
                             self.merge_buffer_apply = true;
                             self.start_merge(hunks);
                         } else {
-                            self.push_info("  ❌ No patches found in current buffer.", LineStyle::Error);
+                            self.push_info(
+                                "  ❌ No patches found in current buffer.",
+                                LineStyle::Error,
+                            );
                             self.scroll_to_bottom();
                         }
                     }
@@ -879,7 +882,10 @@ impl Repl {
                                 }
                             }
                             Err(e) => {
-                                self.push_info(format!("  ❌ Clipboard Error: {}", e), LineStyle::Error);
+                                self.push_info(
+                                    format!("  ❌ Clipboard Error: {}", e),
+                                    LineStyle::Error,
+                                );
                                 self.scroll_to_bottom();
                             }
                         }
@@ -889,6 +895,23 @@ impl Repl {
                     self.render(stdout)?;
                     return Ok(());
                 } else {
+                    let paste_amount = self.count.unwrap_or(1);
+                    if !self.yank_register.is_empty() {
+                        let cursor_line = self.buffer().cursor_line();
+                        let lines_to_paste = self.yank_register.clone();
+                        let paste_len = lines_to_paste.len();
+                        let mut insert_idx = cursor_line + 1;
+                        for _ in 0..paste_amount {
+                            self.buffer_mut().insert_lines(insert_idx, &lines_to_paste);
+                            insert_idx += paste_len;
+                        }
+                        self.buffer_mut().set_cursor(cursor_line + 1, 0);
+                        self.ensure_cursor_visible();
+                        let buf_name = self.buffer().name().to_string();
+                        if !buf_name.is_empty() && buf_name != "Chat" && buf_name != "Console" {
+                            self.modified_buffers.insert(buf_name);
+                        }
+                    }
                     self.clear_pending();
                     self.count = None;
                 }
@@ -897,25 +920,36 @@ impl Repl {
                 if self.pending == Some('y') {
                     let cursor_line = self.buffer().cursor_line();
                     let cursor_col = self.buffer().cursor_col();
-                    if let Some(line) = self.buffer().lines().get(cursor_line) {
-                        match arboard::Clipboard::new()
-                            .and_then(|mut cb| cb.set_text(line.content().clone()))
-                        {
-                            Ok(_) => {
-                                self.push_info(
-                                    "  📋 Yanked line to clipboard".to_string(),
-                                    LineStyle::Dim,
-                                );
-                            }
-                            Err(e) => {
-                                self.push_info(
-                                    format!("  ❌ Clipboard error: {}", e),
-                                    LineStyle::Error,
-                                );
-                            }
+                    let amount = self.count.unwrap_or(1);
+                    let lines_len = self.buffer().len();
+                    let end_line = (cursor_line + amount).min(lines_len);
+                    let mut yanked_text = String::new();
+                    self.yank_register.clear();
+                    for i in cursor_line..end_line {
+                        if let Some(line) = self.buffer().lines().get(i) {
+                            yanked_text.push_str(&line.content());
+                            yanked_text.push('\n');
+                            self.yank_register.push(line.clone());
                         }
-                        self.set_cursor(cursor_line, cursor_col);
                     }
+                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text)) {
+                        Ok(_) => {
+                            self.push_info(
+                                format!(
+                                    "  📋 Yanked {} line(s) to clipboard",
+                                    end_line - cursor_line
+                                ),
+                                LineStyle::Dim,
+                            );
+                        }
+                        Err(e) => {
+                            self.push_info(
+                                format!("  ❌ Clipboard error: {}", e),
+                                LineStyle::Error,
+                            );
+                        }
+                    }
+                    self.set_cursor(cursor_line, cursor_col);
                     self.clear_pending();
                     self.count = None;
                 } else {
@@ -1180,11 +1214,12 @@ impl Repl {
             if lines_len > 0 {
                 let end_line = (cursor_line + amount).min(lines_len);
                 let mut yanked_text = String::new();
-
+                self.yank_register.clear();
                 for i in cursor_line..end_line {
                     if let Some(line) = self.buffer().lines().get(i) {
                         yanked_text.push_str(&line.content());
                         yanked_text.push('\n');
+                        self.yank_register.push(line.clone());
                     }
                 }
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(yanked_text)) {
@@ -1206,6 +1241,10 @@ impl Repl {
                     format!("  🗑️  Deleted {} line(s)", end_line - cursor_line),
                     LineStyle::Dim,
                 );
+                let buf_name = self.buffer().name().to_string();
+                if !buf_name.is_empty() && buf_name != "Chat" && buf_name != "Console" {
+                    self.modified_buffers.insert(buf_name);
+                }
             }
         }
         Ok(())
