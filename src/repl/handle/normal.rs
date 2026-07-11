@@ -37,13 +37,6 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
-        if self.pending == Some('g') && key.code == KeyCode::Char('r') {
-            self.revert_current_hunk()?;
-            self.clear_pending();
-            self.count = None;
-            self.render(stdout)?;
-            return Ok(());
-        }
         if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('w') {
             let result = self.execute_command("w", stdout)?;
             if let CommandResult::Quit = result {
@@ -808,11 +801,32 @@ impl Repl {
                     self.buffer_mut().move_top();
                     self.clear_pending();
                     self.count = None;
+                } else if self.pending == Some(',') {
+                    self.pending = Some('g');
+                    self.show_which_key_popup('g');
+                    self.render(stdout)?;
+                    return Ok(());
                 } else {
                     self.pending = Some('g');
                     self.show_which_key_popup('g');
                     self.render(stdout)?;
                     return Ok(());
+                }
+            }
+            KeyCode::Char(',') => {
+                self.pending = Some(',');
+                self.show_which_key_popup(',');
+                self.render(stdout)?;
+                return Ok(());
+            }
+            KeyCode::Char('r') => {
+                if self.pending == Some('g') {
+                    self.revert_current_hunk()?;
+                    self.clear_pending();
+                    self.count = None;
+                } else {
+                    self.clear_pending();
+                    self.count = None;
                 }
             }
             KeyCode::Char('y') => {

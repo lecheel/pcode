@@ -622,11 +622,23 @@ impl super::Repl {
                 is_active: false,
                 id: None,
             }],
-            'g' => vec![PopupItem {
-                text: "g → go to top".to_string(),
+            ',' => vec![PopupItem {
+                text: "g → git".to_string(),
                 is_active: false,
                 id: None,
             }],
+            'g' => vec![
+                PopupItem {
+                    text: "g → go to top".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+                PopupItem {
+                    text: "r → revert hunk".to_string(),
+                    is_active: false,
+                    id: None,
+                },
+            ],
             'y' => vec![PopupItem {
                 text: "y → yank line".to_string(),
                 is_active: false,
