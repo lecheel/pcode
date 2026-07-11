@@ -49,6 +49,8 @@ pub enum PopupMode {
     GitHunks,
     FunctionList,
     WhichKey,
+
+    Message,
 }
 
 pub(crate) enum CommandResult {
@@ -726,7 +728,7 @@ impl Repl {
         }
 
         self.render_spinner_only(stdout)?;
-        if self.popup.active {
+        if self.popup.active && self.popup_mode != PopupMode::Message {
             self.popup.render(stdout, self.width, self.height)?;
         }
         stdout.flush()?;
@@ -902,6 +904,51 @@ impl Repl {
                 let col = UnicodeWidthStr::width(prompt) + cursor_col;
                 queue!(stdout, cursor::Show, cursor::MoveTo(col as u16, input_y))?;
             }
+        }
+
+        if self.popup.active && self.popup_mode == PopupMode::Message {
+            let term_w = self.term_width() as u16;
+            let margin = 2;
+            let box_w = term_w.saturating_sub(margin * 2);
+            let x = margin;
+            let y_bot = self.height.saturating_sub(3);
+            let y_l1 = y_bot.saturating_sub(1);
+            let y_top = y_l1.saturating_sub(1);
+            let inner_w = (box_w as usize).saturating_sub(2);
+            
+            let msg = self.popup.items.first().map(|i| i.text.as_str()).unwrap_or("");
+            let msg_disp = if UnicodeWidthStr::width(msg) > inner_w {
+                let mut s = String::new();
+                let mut w = 0;
+                for g in msg.graphemes(true) {
+                    let gw = UnicodeWidthStr::width(g);
+                    if w + gw > inner_w {
+                        break;
+                    }
+                    s.push_str(g);
+                    w += gw;
+                }
+                s
+            } else {
+                msg.to_string()
+            };
+            let current_w = UnicodeWidthStr::width(msg_disp.as_str());
+            let pad_str = " ".repeat(inner_w.saturating_sub(current_w));
+            
+            queue!(
+                stdout,
+                SetForegroundColor(Color::DarkYellow),
+                SetAttribute(Attribute::Bold),
+                cursor::MoveTo(x, y_top),
+                Print(format!("╭{}╮", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_bot),
+                Print(format!("╰{}╯", "─".repeat(inner_w))),
+                cursor::MoveTo(x, y_l1),
+                Print(format!("│{}{}│", msg_disp, pad_str)),
+                style::ResetColor,
+                SetAttribute(Attribute::Reset),
+                cursor::Hide
+            )?;
         }
 
         if self.fkey_help && self.mode != Mode::Merge {

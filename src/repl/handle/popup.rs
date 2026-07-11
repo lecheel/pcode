@@ -8,13 +8,16 @@ use crate::repl::misc::{list_impl_files, list_project_files};
 use crate::repl::{Mode, PopupMode};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::io;
-
 impl Repl {
     pub(super) fn handle_popup_key(
         &mut self,
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
+        if self.popup_mode == PopupMode::Message {
+            self.popup.hide();
+            return self.render(stdout);
+        }
         match key.code {
             KeyCode::Down | KeyCode::Tab => {
                 self.popup.move_down();
@@ -68,6 +71,7 @@ impl Repl {
                         PopupMode::WhichKey => {
                             // WhichKey popup is not interactive; handled by normal mode
                         }
+                        PopupMode::Message => {}
                     }
                 }
                 self.popup.hide();

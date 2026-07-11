@@ -3,6 +3,7 @@
 
 use super::super::*;
 use crate::repl::buffer::{BufferLine, LineStyle};
+use crate::repl::helper::{PopupItem, PopupPosition};
 use crate::repl::misc;
 use crate::repl::{CommandResult, Mode, RepeatAction};
 use crossterm::{
