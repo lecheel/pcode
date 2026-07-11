@@ -247,9 +247,21 @@ async fn main() -> Result<()> {
                 std::process::exit(0);
             }
             "--fzf" => {
+                use std::fs;
                 use std::io::Write;
                 use std::process::{Command, Stdio};
-                let choices = "todo.md\ntemp.md\nimpl.md";
+                let mut choices = String::new();
+                // Add all existing bugNN.md files
+                for entry in fs::read_dir(".").unwrap() {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().into_string().unwrap();
+                    if name.starts_with("bug") && name.ends_with(".md") && name.len() >= 7 {
+                        choices.push_str(&name);
+                        choices.push('\n');
+                    }
+                }
+                // Add the other files
+                choices.push_str("todo.md\ntemp.md\nimpl.md");
                 let mut cmd = Command::new("fzf");
                 cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
                 let mut child = match cmd.spawn() {
