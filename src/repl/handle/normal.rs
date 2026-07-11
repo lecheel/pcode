@@ -802,8 +802,8 @@ impl Repl {
                     self.clear_pending();
                     self.count = None;
                 } else if self.pending == Some(',') {
-                    self.pending = Some('g');
-                    self.show_which_key_popup('g');
+                    self.pending = Some('G');
+                    self.show_which_key_popup('G');
                     self.render(stdout)?;
                     return Ok(());
                 } else {
@@ -820,7 +820,7 @@ impl Repl {
                 return Ok(());
             }
             KeyCode::Char('r') => {
-                if self.pending == Some('g') {
+                if self.pending == Some('G') {
                     self.revert_current_hunk()?;
                     self.clear_pending();
                     self.count = None;
