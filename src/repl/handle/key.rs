@@ -13,6 +13,9 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
+        if self.mode == Mode::Merge {
+            return self.handle_merge_key(key, stdout);
+        }
         if self.fkey_help && key.code != KeyCode::Char('?') {
             self.fkey_help = false;
         }
@@ -53,7 +56,9 @@ impl Repl {
             }
             return Ok(());
         }
-        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('b') {
+        if (key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META))
+            && (key.code == KeyCode::Char('b') || key.code == KeyCode::Char('B'))
+        {
             if self.popup.active {
                 self.popup.hide();
             } else {
@@ -62,9 +67,9 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
-        if key.modifiers.contains(KeyModifiers::ALT) {
+        if key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META) {
             match key.code {
-                KeyCode::Char('q') => {
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
                     self.editor.save_history(&self.config.repl.history_file);
                     self.cmd_editor
                         .save_history(&self.config.repl.command_history_file);
@@ -73,7 +78,7 @@ impl Repl {
                     }
                     return Err(anyhow::anyhow!("__QUIT__"));
                 }
-                KeyCode::Char('e') => {
+                KeyCode::Char('e') | KeyCode::Char('E') => {
                     if !self.waiting {
                         if self.mode == Mode::FilePicker {
                             self.mode = Mode::Normal;
@@ -87,40 +92,7 @@ impl Repl {
                     }
                     return Ok(());
                 }
-                KeyCode::Char('w') => {
-                    if self.mode == Mode::Merge {
-                        let mut saved_count = 0;
-                        let modified_files: Vec<String> =
-                            self.modified_buffers.iter().cloned().collect();
-                        for file in &modified_files {
-                            if let Some(idx) = self.buffers.iter().position(|b| b.name() == file) {
-                                let root =
-                                    std::path::PathBuf::from(&self.config.tools.project_root);
-                                let path = root.join(file);
-                                let content: String = self.buffers[idx]
-                                    .lines()
-                                    .iter()
-                                    .map(|l| l.content().clone())
-                                    .collect::<Vec<String>>()
-                                    .join("\n");
-                                if std::fs::write(&path, content).is_ok() {
-                                    saved_count += 1;
-                                }
-                            }
-                        }
-                        self.modified_buffers.clear();
-                        self.pending_merge = None;
-                        self.mode = Mode::Normal;
-                        self.push_info(
-                            format!(
-                                "  💾 Saved {} buffer(s) to disk. Exited Merge Mode.",
-                                saved_count
-                            ),
-                            LineStyle::ToolResult,
-                        );
-                        self.render(stdout)?;
-                        return Ok(());
-                    }
+                KeyCode::Char('w') | KeyCode::Char('W') => {
                     if self.buffer().name() == "SedChanges" {
                         let _ = self.apply_sed_changes(stdout);
                     } else {
@@ -129,7 +101,7 @@ impl Repl {
                     self.render(stdout)?;
                     return Ok(());
                 }
-                KeyCode::Char('d') => {
+                KeyCode::Char('d') | KeyCode::Char('D') => {
                     if !self.waiting {
                         let amount = self.count.unwrap_or(1);
                         self.do_dd(amount)?;
@@ -139,7 +111,7 @@ impl Repl {
                     }
                     return Ok(());
                 }
-                KeyCode::Char('x') => {
+                KeyCode::Char('x') | KeyCode::Char('X') => {
                     self.close_buffer();
                     self.render(stdout)?;
                     return Ok(());
@@ -200,9 +172,6 @@ impl Repl {
         }
 
         if key.code == KeyCode::F(9) {
-            if self.mode == Mode::Merge {
-                return self.handle_merge_key(key, stdout);
-            }
             if !self.waiting {
                 let content: String = self
                     .buffer()

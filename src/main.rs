@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
                     let cwd = std::env::current_dir()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|_| ".".to_string());
-                    
+
                     match tools::daemon::resolve_repo_by_path(&config, &cwd).await {
                         Ok(id) => {
                             println!("📁 Current directory belongs to repo: {}", id);
@@ -167,7 +167,10 @@ async fn main() -> Result<()> {
                                             if let Some(rid) = r["id"].as_str() {
                                                 let path = r["source_path"].as_str().unwrap_or("?");
                                                 let files = r["file_count"].as_u64().unwrap_or(0);
-                                                println!("  • {:12} ({} files) {}", rid, files, path);
+                                                println!(
+                                                    "  • {:12} ({} files) {}",
+                                                    rid, files, path
+                                                );
                                             }
                                         }
                                         print!("\nEnter repo ID to sync (or Enter to cancel): ");
@@ -175,7 +178,11 @@ async fn main() -> Result<()> {
                                         let mut input = String::new();
                                         std::io::stdin().read_line(&mut input).unwrap();
                                         let input = input.trim().to_string();
-                                        if input.is_empty() { None } else { Some(input) }
+                                        if input.is_empty() {
+                                            None
+                                        } else {
+                                            Some(input)
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -216,7 +223,7 @@ async fn main() -> Result<()> {
             "--pb" => {
                 use_clipboard_patch = true;
             }
-            "--patch" => {
+            "--patch" | "-p" => {
                 let template = r#"Please apply changes using this aider style format all changed in single code block
 ```
 // src/filename1.rs

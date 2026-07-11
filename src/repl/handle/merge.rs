@@ -850,6 +850,46 @@ impl Repl {
                 self.mode = Mode::Insert;
                 self.push_info("  Exited Merge Mode.", LineStyle::Dim);
             }
+            KeyCode::Char('x') | KeyCode::Char('X')
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::META) =>
+            {
+                self.pending_merge = None;
+                self.mode = Mode::Insert;
+                self.push_info("  Exited Merge Mode.", LineStyle::Dim);
+            }
+            KeyCode::Char('w') | KeyCode::Char('W')
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::META) =>
+            {
+                let mut saved_count = 0;
+                let modified_files: Vec<String> = self.modified_buffers.iter().cloned().collect();
+                for file in &modified_files {
+                    if let Some(idx) = self.buffers.iter().position(|b| b.name() == file) {
+                        let root = std::path::PathBuf::from(&self.config.tools.project_root);
+                        let path = root.join(file);
+                        let content: String = self.buffers[idx]
+                            .lines()
+                            .iter()
+                            .map(|l| l.content().clone())
+                            .collect::<Vec<String>>()
+                            .join("\n");
+                        if std::fs::write(&path, content).is_ok() {
+                            saved_count += 1;
+                        }
+                    }
+                }
+                self.modified_buffers.clear();
+                self.pending_merge = None;
+                self.mode = Mode::Normal;
+                self.push_info(
+                    format!(
+                        "  💾 Saved {} buffer(s) to disk. Exited Merge Mode.",
+                        saved_count
+                    ),
+                    LineStyle::ToolResult,
+                );
+            }
             _ => {}
         }
         self.render(stdout)?;
