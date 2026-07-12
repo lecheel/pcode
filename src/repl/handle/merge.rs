@@ -1313,8 +1313,8 @@ impl Repl {
         };
         let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
 
-        // Pre-compute (score, candidate_count, applied, filename) for every hunk
-        let mut summaries: Vec<(u32, usize, bool, String)> = Vec::with_capacity(hunks.len());
+        // Pre-compute (score, candidate_count, applied) for every hunk
+        let mut summaries: Vec<(u32, usize, bool)> = Vec::with_capacity(hunks.len());
         for (i, hunk) in hunks.iter().enumerate() {
             let file_path = project_root.join(&hunk.filename);
             let file_content =
@@ -1348,74 +1348,48 @@ impl Repl {
             };
 
             let applied = self.merge_applied.get(i).copied().unwrap_or(false);
-            let fname_short = hunk
-                .filename
-                .rsplit('/')
-                .next()
-                .unwrap_or(&hunk.filename)
-                .to_string();
-            summaries.push((score, cand_count, applied, fname_short));
+            summaries.push((score, cand_count, applied));
         }
 
-        // Pack 3 items per line
-        const ITEMS_PER_LINE: usize = 3;
+        // Pack as many items as possible per line based on terminal width
+        let max_w = self.term_width().saturating_sub(6);
         let mut items: Vec<crate::repl::helper::PopupItem> = Vec::new();
         let mut current_line = String::new();
-        let mut count_in_line = 0usize;
 
-        for (i, (score, cand_count, applied, fname)) in summaries.iter().enumerate() {
-            let icon = if *applied {
-                "✅"
-            } else if *score >= 100 {
-                "🎯"
-            } else if *score == 0 {
-                "❌"
-            } else if *score >= 80 {
-                "🟡"
-            } else {
-                "⏳"
-            };
-
+        for (i, (score, cand_count, _applied)) in summaries.iter().enumerate() {
             // Add green color for 100% using ANSI escape codes
-            let score_display = if *score == 100 {
+            let score_str = if *score == 100 {
                 "\x1b[32m100%\x1b[0m".to_string()
             } else {
                 format!("{}%", score)
             };
-
-            // Compact: "✅ search 1 (100%) ( 2 cands ) file.rs"
-            let item_text = format!(
-                "{} search {} ({}) ( {} cand{} ) {}",
-                icon,
-                i + 1,
-                score_display,
-                cand_count,
-                if *cand_count == 1 { "" } else { "s" },
-                fname,
-            );
-
-            if count_in_line == 0 {
-                current_line = item_text;
+            
+            let item_str = format!("{}({}{})", i + 1, score_str, cand_count);
+            
+            if current_line.is_empty() {
+                current_line = item_str;
             } else {
-                current_line.push_str(" │ ");
-                current_line.push_str(&item_text);
-            }
-            count_in_line += 1;
-
-            if count_in_line >= ITEMS_PER_LINE {
-                items.push(crate::repl::helper::PopupItem {
-                    text: current_line.clone(),
-                    is_active: true,
-                    id: None,
-                });
-                current_line.clear();
-                count_in_line = 0;
+                let test_line = format!("{}  {}", current_line, item_str);
+                // Check visual width without ANSI escape codes
+                let clean_test = test_line.replace("\x1b[32m", "").replace("\x1b[0m", "");
+                let width = UnicodeWidthStr::width(clean_test.as_str());
+                
+                if width > max_w {
+                    items.push(crate::repl::helper::PopupItem {
+                        text: std::mem::take(&mut current_line),
+                        is_active: true,
+                        id: None,
+                    });
+                    current_line = item_str;
+                } else {
+                    current_line = test_line;
+                }
             }
         }
-
-        if count_in_line > 0 {
+        
+        if !current_line.is_empty() {
             items.push(crate::repl::helper::PopupItem {
-                text: current_line.clone(),
+                text: current_line,
                 is_active: true,
                 id: None,
             });
@@ -1429,9 +1403,16 @@ impl Repl {
             });
         }
 
+        let all_100 = !summaries.is_empty() && summaries.iter().all(|(s, _, _)| *s == 100);
+        let title = if all_100 {
+            "(All 100%) Hunk Summary"
+        } else {
+            "Hunk Summary"
+        };
+
         self.popup_mode = crate::repl::PopupMode::Message;
         self.popup.show(
-            "Hunk Summary",
+            title,
             items,
             0,
             crate::repl::helper::PopupPosition::Center,
