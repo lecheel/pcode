@@ -15,21 +15,26 @@ mod task;
 mod tools;
 use config::AppConfig;
 fn print_help() {
+    // Mode tags (llm)/(tui)/(auto)/(prompt) rendered in green
+    const G: &str = "\x1b[32m";
+    const R: &str = "\x1b[0m";
     eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
     eprintln!("  pl                       Start REPL with default config");
-    eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task (llm)");
     eprintln!(
-        "  pl --fastpatch [impl.md] Apply patches from file locally using fuzzy match (auto)"
+        "  pl --todo <todo.md>      Start REPL and auto-submit todo task {G}(llm){R}"
     );
     eprintln!(
-        "  pl --pb                  Apply patches from clipboard locally using fuzzy match (tui)"
+        "  pl --fastpatch [impl.md] Apply patches from file locally using fuzzy match {G}(auto){R}"
     );
     eprintln!(
-        "  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf (auto)"
+        "  pl --pb                  Apply patches from clipboard locally using fuzzy match {G}(tui){R}"
     );
     eprintln!(
-        "  pl --patch               Print and copy the aider patch format to clipboard (prompt)"
+        "  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf {G}(auto){R}"
+    );
+    eprintln!(
+        "  pl --patch               Print and copy the aider patch format to clipboard {G}(prompt){R}"
     );
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
