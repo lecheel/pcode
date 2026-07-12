@@ -18,11 +18,19 @@ fn print_help() {
     eprintln!("pcode — vim-modal patch REPL\n");
     eprintln!("Usage:");
     eprintln!("  pl                       Start REPL with default config");
-    eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task");
-    eprintln!("  pl --fastpatch [file]    Apply patches from file locally using fuzzy match");
-    eprintln!("  pl --pb                  Apply patches from clipboard locally using fuzzy match");
-    eprintln!("  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf");
-    eprintln!("  pl --patch               Print and copy the aider patch format to clipboard");
+    eprintln!("  pl --todo <todo.md>      Start REPL and auto-submit todo task (llm)");
+    eprintln!(
+        "  pl --fastpatch [impl.md] Apply patches from file locally using fuzzy match (auto)"
+    );
+    eprintln!(
+        "  pl --pb                  Apply patches from clipboard locally using fuzzy match (tui)"
+    );
+    eprintln!(
+        "  pl --fzf                 Select patch file (todo.md/temp.md/impl.md) via fzf (auto)"
+    );
+    eprintln!(
+        "  pl --patch               Print and copy the aider patch format to clipboard (prompt)"
+    );
     eprintln!("  pl <file>                open file for view");
     eprintln!("  pl -q                    Quick switch via mswitch binary");
     eprintln!("  pl -s [repo]             Sync repo (uses active, cwd resolve, or prompt)");
