@@ -65,3 +65,8 @@ I have a wide range of **surgical code editing skills** organized into four phas
 
 **In short**: I can surgically edit Rust (and other language) code with AST-level precision, never breaking the structure by accident. I work best when you tell me what you want to build, fix, or refactor! 🛠️
 ```
+
+![image](./asserts/pcode_01.png)
+![image](./asserts/pcode_02.png)
+![image](./asserts/pcode_03.png)
+
