@@ -448,6 +448,7 @@ impl Repl {
             "  🔀 Entering Merge Mode. [a]pply [r]ecalc  ma/mA set  [q]uit",
             LineStyle::Info,
         );
+        self.show_merge_summary_popup();
     }
 
     fn calc_merge_file_scroll(&mut self) {
@@ -1363,9 +1364,13 @@ impl Repl {
             } else {
                 format!("{}%", score)
             };
-            
-            let item_str = format!("{}({}{})", i + 1, score_str, cand_count);
-            
+
+            let item_str = if *score == 100 {
+                format!("\x1b[32m{}(100%|{})\x1b[0m", i + 1, cand_count)
+            } else {
+                format!("{}({}%|{})", i + 1, score, cand_count)
+            };
+
             if current_line.is_empty() {
                 current_line = item_str;
             } else {
@@ -1373,7 +1378,7 @@ impl Repl {
                 // Check visual width without ANSI escape codes
                 let clean_test = test_line.replace("\x1b[32m", "").replace("\x1b[0m", "");
                 let width = UnicodeWidthStr::width(clean_test.as_str());
-                
+
                 if width > max_w {
                     items.push(crate::repl::helper::PopupItem {
                         text: std::mem::take(&mut current_line),
@@ -1386,7 +1391,7 @@ impl Repl {
                 }
             }
         }
-        
+
         if !current_line.is_empty() {
             items.push(crate::repl::helper::PopupItem {
                 text: current_line,
@@ -1411,12 +1416,8 @@ impl Repl {
         };
 
         self.popup_mode = crate::repl::PopupMode::Message;
-        self.popup.show(
-            title,
-            items,
-            0,
-            crate::repl::helper::PopupPosition::Center,
-        );
+        self.popup
+            .show(title, items, 0, crate::repl::helper::PopupPosition::Center);
     }
 
     fn next_merge(&mut self) {
@@ -1607,7 +1608,7 @@ impl Repl {
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [?] Help [a]pply [l]next [S]ummary "),
+            Print("  [?] Help [a]pply [l]next [s]ummary "),
             style::ResetColor
         )?;
         let start_y = 1;
@@ -1822,7 +1823,9 @@ impl Repl {
         if self.fkey_help {
             let term_w = self.term_width() as u16;
             let margin = 2;
-            let box_w = term_w.saturating_sub(margin * 2);
+            let box_w = term_w
+                .saturating_sub(margin * 2 + 1)
+                .min(term_w.saturating_sub(margin * 2));
             let x = margin;
             let y_bot = self.height.saturating_sub(3);
             let y_l2 = y_bot.saturating_sub(1);
