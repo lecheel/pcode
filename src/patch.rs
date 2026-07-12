@@ -369,8 +369,10 @@ pub fn run_clipboard_patch(
     let mut newly_applied = Vec::new();
 
     // Pre-score all hunks for summary: N(score%|cand)
+    // Prompt Y/n when ANY hunk has search score > 90% (do not gate on
+    // already-applied / replace-present — those still skip in the apply loop).
     let mut score_items: Vec<String> = Vec::new();
-    let mut eligible_count = 0usize;
+    let mut high_score_count = 0usize;
     for (i, hunk) in hunks.iter().enumerate() {
         if hunk.search.is_empty() {
             score_items.push(format!("{}(0%|0)", i + 1));
@@ -403,30 +405,23 @@ pub fn run_clipboard_patch(
             score_items.push(format!("{}({}%|{})", i + 1, score, cand_count));
         }
         if search_match.score > 90.0 {
-            let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines, true);
-            if replace_match.score < 95.0 {
-                let patch_str = format!(
-                    "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
-                    hunk.search.join("\n"),
-                    hunk.replace.join("\n")
-                );
-                let patch_hash = compute_hash(&patch_str);
-                if !applied_hashes.contains(&patch_hash) {
-                    eligible_count += 1;
-                }
-            }
+            high_score_count += 1;
         }
     }
-    results.push(format!("📊 Hunk scores: {}", score_items.join("  ")));
+    let summary_line = format!("📊 Hunk scores: {}", score_items.join("  "));
+    // Print scores immediately so they appear before the Y/n prompt
+    // (not added to results — avoids double-print when main prints the report)
+    println!("{}", summary_line);
+    let _ = io::stdout().flush();
 
-    // Prompt Y/n once when any hunk is eligible (score > 90%)
+    // Prompt Y/n once when any hunk has score > 90%
     let mut user_approved = true;
-    if eligible_count > 0 {
-        eprint!(
+    if high_score_count > 0 {
+        print!(
             "Apply {} hunk(s) with score > 90%? [Y/n] ",
-            eligible_count
+            high_score_count
         );
-        let _ = io::stderr().flush();
+        let _ = io::stdout().flush();
         let mut input = String::new();
         if io::stdin().read_line(&mut input).is_err() {
             return Err("Failed to read confirmation".to_string());
@@ -434,8 +429,7 @@ pub fn run_clipboard_patch(
         let ans = input.trim().to_lowercase();
         user_approved = ans.is_empty() || ans == "y" || ans == "yes";
         if !user_approved {
-            results.push("🚫 Apply cancelled by user.".to_string());
-            return Ok(results.join("\n\n"));
+            return Ok("🚫 Apply cancelled by user.".to_string());
         }
     }
 
