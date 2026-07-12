@@ -42,6 +42,84 @@ fn undo_stack_len(filename: &str) -> usize {
 fn any_undo_available() -> bool {
     MERGE_UNDO_STACK.with(|s| s.borrow().values().any(|v| !v.is_empty()))
 }
+/// True if `key` is an Alt (or Meta, for terminals/OSes that report Option/Cmd
+/// as Meta) combo with the given character, matched case-insensitively so
+/// callers don't need to check both `Char('d')` and `Char('D')` themselves.
+/// Shared so Alt-shortcut detection stays consistent across normal mode,
+/// merge mode, and any future mode, instead of each handler rolling its
+/// own slightly-different modifier check.
+pub(crate) fn is_alt_combo(key: &KeyEvent, ch: char) -> bool {
+    (key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META))
+        && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&ch))
+}
+/// Finds the bracket matching the one under `(start_line, start_col)`,
+/// vim `%`-style. Supports `()`, `[]`, `{}` in either direction (opening
+/// bracket searches forward, closing bracket searches backward), tracking
+/// nesting depth so it skips over any matching inner pairs along the way.
+pub(crate) fn find_matching_bracket(
+    file_lines: &[String],
+    start_line: usize,
+    start_col: usize,
+) -> Option<(usize, usize)> {
+    let line = file_lines.get(start_line)?;
+    let graphemes: Vec<&str> = line.graphemes(true).collect();
+    if graphemes.is_empty() {
+        return None;
+    }
+    let col = start_col.min(graphemes.len() - 1);
+    let open_g = graphemes.get(col)?;
+    let open = open_g.chars().next()?;
+    let (target_open, target_close, dir) = match open {
+        '(' => ('(', ')', 1),
+        '[' => ('[', ']', 1),
+        '{' => ('{', '}', 1),
+        ')' => ('(', ')', -1),
+        ']' => ('[', ']', -1),
+        '}' => ('{', '}', -1),
+        _ => return None,
+    };
+    let mut depth = 0;
+    if dir == 1 {
+        for l in start_line..file_lines.len() {
+            let line_g: Vec<&str> = file_lines[l].graphemes(true).collect();
+            let start_c = if l == start_line { col } else { 0 };
+            for c in start_c..line_g.len() {
+                let ch = line_g[c].chars().next().unwrap_or(' ');
+                if ch == target_open {
+                    depth += 1;
+                }
+                if ch == target_close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((l, c));
+                    }
+                }
+            }
+        }
+    } else {
+        for l in (0..=start_line).rev() {
+            let line_g: Vec<&str> = file_lines[l].graphemes(true).collect();
+            let end_c = if l == start_line {
+                col
+            } else {
+                line_g.len().saturating_sub(1)
+            };
+            for c in (0..=end_c).rev() {
+                let ch = line_g[c].chars().next().unwrap_or(' ');
+                if ch == target_close {
+                    depth += 1;
+                }
+                if ch == target_open {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((l, c));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 /// Fallback for when `find_best_match`'s strict head/tail boundary
 /// requirement rejects every candidate window (common on short search
 /// blocks where the differing line falls inside the anchor region).
@@ -357,6 +435,7 @@ impl Repl {
         self.merge_scroll = 0;
         self.merge_left_active = true;
         self.merge_right_cursor = 0;
+        self.merge_cursor_col = 0;
         self.merge_search_query = None;
         self.merge_last_modified = None;
         self.merge_applied = vec![false; self.pending_merge.as_ref().unwrap().len()];
@@ -397,6 +476,7 @@ impl Repl {
             self.merge_match_idx = NO_MATCH_IDX;
             self.merge_match_end = NO_MATCH_IDX;
             self.merge_cursor = 0;
+            self.merge_cursor_col = 0;
             self.merge_file_scroll = 0;
             return;
         }
@@ -427,6 +507,7 @@ impl Repl {
             self.merge_match_idx = result.file_start;
             self.merge_match_end = result.file_end;
             self.merge_cursor = result.file_start;
+            self.merge_cursor_col = 0;
             self.merge_file_scroll = result.file_start.saturating_sub(2);
         }
     }
@@ -443,18 +524,10 @@ impl Repl {
 
         let is_ctrl_o =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o');
-        let is_alt_w = (key.modifiers.contains(KeyModifiers::ALT)
-            || key.modifiers.contains(KeyModifiers::META))
-            && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W'));
-        let is_alt_x = (key.modifiers.contains(KeyModifiers::ALT)
-            || key.modifiers.contains(KeyModifiers::META))
-            && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'));
-        let is_alt_d = (key.modifiers.contains(KeyModifiers::ALT)
-            || key.modifiers.contains(KeyModifiers::META))
-            && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D'));
-        let is_alt_q = (key.modifiers.contains(KeyModifiers::ALT)
-            || key.modifiers.contains(KeyModifiers::META))
-            && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'));
+        let is_alt_w = is_alt_combo(&key, 'w');
+        let is_alt_x = is_alt_combo(&key, 'x');
+        let is_alt_d = is_alt_combo(&key, 'd');
+        let is_alt_q = is_alt_combo(&key, 'q');
         if key.modifiers.contains(KeyModifiers::CONTROL)
             || key.modifiers.contains(KeyModifiers::ALT)
             || key.modifiers.contains(KeyModifiers::META)
@@ -485,6 +558,66 @@ impl Repl {
                 self.render(stdout)?;
                 return Ok(());
             }
+        }
+        if is_alt_d && self.merge_left_active {
+            let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+            let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+            let file_path = project_root.join(&hunk.filename);
+            let buf_idx = self.buffers.iter().position(|b| b.name() == hunk.filename);
+            let is_buffer = self.merge_buffer_apply || buf_idx.is_some();
+            let old_content = if let Some(idx) = buf_idx {
+                self.buffers[idx]
+                    .lines()
+                    .iter()
+                    .map(|l| l.content().clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                std::fs::read_to_string(&file_path).unwrap_or_default()
+            };
+            let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
+            if file_lines.is_empty() {
+                self.push_info("  Nothing to delete.", LineStyle::Dim);
+                self.render(stdout)?;
+                return Ok(());
+            }
+            let line_idx = self.merge_cursor.min(file_lines.len() - 1);
+            push_undo(&hunk.filename, &old_content);
+            self.merge_last_modified = Some((hunk.filename.clone(), is_buffer));
+            file_lines.remove(line_idx);
+            let new_content = if file_lines.is_empty() {
+                String::new()
+            } else {
+                file_lines.join("\n") + "\n"
+            };
+            if let Some(idx) = buf_idx {
+                self.buffers[idx].clear();
+                self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+            } else if self.merge_buffer_apply {
+                let idx = self.buffers.len();
+                self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
+                self.buffers[idx].push_str(&new_content, LineStyle::Plain);
+            }
+            if !self.merge_buffer_apply {
+                std::fs::write(&file_path, &new_content)?;
+            }
+            self.modified_buffers.insert(hunk.filename.clone());
+            // Shift/shrink the match range to account for the removed line.
+            if line_idx < self.merge_match_idx {
+                self.merge_match_idx = self.merge_match_idx.saturating_sub(1);
+                self.merge_match_end = self.merge_match_end.saturating_sub(1);
+            } else if line_idx < self.merge_match_end {
+                self.merge_match_end = self.merge_match_end.saturating_sub(1);
+                if self.merge_match_end <= self.merge_match_idx {
+                    self.merge_match_end = self.merge_match_idx + 1;
+                }
+            }
+            let new_len = file_lines.len();
+            self.merge_cursor = if new_len == 0 { 0 } else { line_idx.min(new_len - 1) };
+            self.merge_cursor_col = 0;
+            self.push_info("  🗑️  Deleted line", LineStyle::Dim);
+            self.render(stdout)?;
+            return Ok(());
         }
         if is_ctrl_o {
             let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
@@ -758,6 +891,80 @@ impl Repl {
                     );
                 } else {
                     self.push_info("  ⏭️ Only 1 hunk, nothing to skip to.", LineStyle::Dim);
+                }
+            }
+            KeyCode::Char('%') => {
+                if self.merge_left_active {
+                    let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                    let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let file_path = project_root.join(&hunk.filename);
+                    let file_content = if let Some(idx) =
+                        self.buffers.iter().position(|b| b.name() == hunk.filename)
+                    {
+                        self.buffers[idx]
+                            .lines()
+                            .iter()
+                            .map(|l| l.content().clone())
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    } else {
+                        std::fs::read_to_string(&file_path).unwrap_or_default()
+                    };
+                    let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+                    if let Some((l, c)) =
+                        find_matching_bracket(&file_lines, self.merge_cursor, self.merge_cursor_col)
+                    {
+                        self.merge_cursor = l;
+                        self.merge_cursor_col = c;
+                        if let Some(line) = file_lines.get(l) {
+                            let len = line.graphemes(true).count();
+                            self.merge_cursor_col = self.merge_cursor_col.min(len.saturating_sub(1));
+                        }
+                        if l < self.merge_file_scroll {
+                            self.merge_file_scroll = l.saturating_sub(2);
+                        }
+                    }
+                }
+            }
+            KeyCode::Left => {
+                if self.merge_left_active {
+                    if self.merge_cursor_col > 0 {
+                        self.merge_cursor_col -= 1;
+                    }
+                }
+            }
+            KeyCode::Right => {
+                if self.merge_left_active {
+                    self.merge_cursor_col += 1;
+                }
+            }
+            KeyCode::Home => {
+                if self.merge_left_active {
+                    self.merge_cursor_col = 0;
+                }
+            }
+            KeyCode::End => {
+                if self.merge_left_active {
+                    let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
+                    let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+                    let file_path = project_root.join(&hunk.filename);
+                    let file_content = if let Some(idx) =
+                        self.buffers.iter().position(|b| b.name() == hunk.filename)
+                    {
+                        self.buffers[idx]
+                            .lines()
+                            .iter()
+                            .map(|l| l.content().clone())
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    } else {
+                        std::fs::read_to_string(&file_path).unwrap_or_default()
+                    };
+                    let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+                    if let Some(line) = file_lines.get(self.merge_cursor) {
+                        let len = line.graphemes(true).count();
+                        self.merge_cursor_col = len.saturating_sub(1);
+                    }
                 }
             }
             KeyCode::Char('m') => {
@@ -1348,9 +1555,6 @@ impl Repl {
                     '-' => Color::Red,
                     _ => Color::DarkGrey,
                 };
-                let disp = trunc(line, left_panel_content_w);
-                let pad =
-                    left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
                 let (fg, bg) = if is_cursor {
                     (Color::Black, Color::Cyan)
                 } else if is_applied_line {
@@ -1362,18 +1566,68 @@ impl Repl {
                 } else {
                     (Color::White, Color::Black)
                 };
-                queue!(
-                    stdout,
-                    cursor::MoveTo(0, y),
-                    SetBackgroundColor(bg),
-                    SetForegroundColor(Color::DarkGrey),
-                    Print(&line_num_str),
-                    SetForegroundColor(diff_color),
-                    Print(diff_char),
-                    SetForegroundColor(fg),
-                    Print(format!(" {}{}", disp, " ".repeat(pad))),
-                    style::ResetColor
-                )?;
+                if is_cursor && self.merge_left_active {
+                    let graphemes: Vec<&str> = line.graphemes(true).collect();
+                    let col = self.merge_cursor_col.min(graphemes.len().saturating_sub(1));
+                    let mut left_part = String::new();
+                    let mut mid_part = String::new();
+                    let mut right_part = String::new();
+                    for (i, g) in graphemes.iter().enumerate() {
+                        if i < col {
+                            left_part.push_str(g);
+                        } else if i == col {
+                            mid_part.push_str(g);
+                        } else {
+                            right_part.push_str(g);
+                        }
+                    }
+                    let left_w = UnicodeWidthStr::width(left_part.as_str());
+                    let mid_str = if mid_part.is_empty() {
+                        " ".to_string()
+                    } else {
+                        mid_part.clone()
+                    };
+                    let mid_w = UnicodeWidthStr::width(mid_str.as_str());
+                    let right_w = UnicodeWidthStr::width(right_part.as_str());
+                    let total_w = left_w + mid_w + right_w + 1;
+                    let pad = left_panel_content_w.saturating_sub(total_w);
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(&line_num_str),
+                        SetForegroundColor(diff_color),
+                        Print(diff_char),
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(fg),
+                        Print(format!(" {}", left_part)),
+                        SetBackgroundColor(Color::White),
+                        SetForegroundColor(Color::Black),
+                        Print(&mid_str),
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(fg),
+                        Print(&right_part),
+                        Print(" ".repeat(pad)),
+                        style::ResetColor
+                    )?;
+                } else {
+                    let disp = trunc(line, left_panel_content_w);
+                    let pad = left_panel_content_w
+                        .saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(0, y),
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(&line_num_str),
+                        SetForegroundColor(diff_color),
+                        Print(diff_char),
+                        SetForegroundColor(fg),
+                        Print(format!(" {}{}", disp, " ".repeat(pad))),
+                        style::ResetColor
+                    )?;
+                }
             } else {
                 queue!(
                     stdout,

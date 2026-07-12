@@ -116,14 +116,18 @@ impl Repl {
                     return Ok(true);
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') => {
-                    if !self.waiting {
+                    if self.mode == Mode::Merge {
+                        // Let this fall through to handle_merge_key, which has
+                        // its own Alt-D behavior (delete the file line under
+                        // the merge cursor) distinct from normal-mode do_dd.
+                    } else if !self.waiting {
                         let amount = self.count.unwrap_or(1);
                         self.do_dd(amount)?;
                         self.count = None;
                         self.pending = None;
                         self.render(stdout)?;
+                        return Ok(true);
                     }
-                    return Ok(true);
                 }
                 KeyCode::Char('x') | KeyCode::Char('X') => {
                     self.close_buffer();

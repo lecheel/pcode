@@ -38,7 +38,7 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
-        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('w') {
+        if crate::repl::handle::merge::is_alt_combo(&key, 'w') {
             let result = self.execute_command("w", stdout)?;
             if let CommandResult::Quit = result {
                 self.editor.save_history(&self.config.repl.history_file);
@@ -440,9 +440,7 @@ impl Repl {
         }
 
         let amount = self.count.unwrap_or(1);
-        if (key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META))
-            && (key.code == KeyCode::Char('d') || key.code == KeyCode::Char('D'))
-        {
+        if crate::repl::handle::merge::is_alt_combo(&key, 'd') {
             self.do_dd(amount)?;
             self.count = None;
             self.clear_pending();
@@ -762,6 +760,25 @@ impl Repl {
                     let len = line.content().graphemes(true).count();
                     let col = if len > 0 { len - 1 } else { 0 };
                     self.set_cursor(line_idx, col);
+                    self.ensure_cursor_visible();
+                }
+                self.count = None;
+            }
+            KeyCode::Char('%') => {
+                let cursor_line = self.buffer().cursor_line();
+                let cursor_col = self.buffer().cursor_col();
+                let lines: Vec<String> =
+                    self.buffer().lines().iter().map(|l| l.content()).collect();
+                if let Some((l, c)) = crate::repl::handle::merge::find_matching_bracket(
+                    &lines,
+                    cursor_line,
+                    cursor_col,
+                ) {
+                    let clamped_c = lines
+                        .get(l)
+                        .map(|line| c.min(line.graphemes(true).count().saturating_sub(1)))
+                        .unwrap_or(c);
+                    self.buffer_mut().set_cursor(l, clamped_c);
                     self.ensure_cursor_visible();
                 }
                 self.count = None;
