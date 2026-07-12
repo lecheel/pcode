@@ -883,6 +883,13 @@ impl Repl {
             KeyCode::Char('?') => {
                 self.fkey_help = !self.fkey_help;
             }
+            KeyCode::Char('w') => {
+                // Save all modified buffers to disk without leaving Merge
+                // mode, same as Alt-w. Kept separate from Alt-w so both the
+                // modifier and plain-key forms work identically here.
+                self.save_merge_buffers(stdout)?;
+                return Ok(());
+            }
             KeyCode::Char('r') => {
                 self.calc_merge_file_scroll();
                 self.push_info(
@@ -1655,7 +1662,7 @@ impl Repl {
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [?] Help [a]pply [l]next [s]ummary "),
+            Print("  [?] Help [a]pply [w]rite [l]next [s]ummary "),
             style::ResetColor
         )?;
         let start_y = 1;
