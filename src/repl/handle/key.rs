@@ -107,7 +107,13 @@ impl Repl {
                     return Ok(true);
                 }
                 KeyCode::Char('w') | KeyCode::Char('W') => {
-                    if self.buffer().name() == "SedChanges" {
+                    if self.mode == Mode::Merge {
+                        // Save in place without exiting Merge mode. The
+                        // generic "write" command targets self.active_buffer
+                        // and can change self.mode, which was silently
+                        // kicking users out of Merge mode on Alt-w.
+                        self.save_merge_buffers(stdout)?;
+                    } else if self.buffer().name() == "SedChanges" {
                         let _ = self.apply_sed_changes(stdout);
                     } else {
                         self.execute_command("write", stdout)?;

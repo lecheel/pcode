@@ -513,6 +513,53 @@ impl Repl {
         }
     }
 
+    /// Writes every buffer currently marked as modified to its file on disk,
+    /// ensuring a trailing newline, without leaving Merge mode. Used by
+    /// Alt-w while a merge is in progress (buffer-apply mode), since the
+    /// normal ":w" write command only knows about `self.active_buffer` and
+    /// would otherwise exit Merge mode as a side effect.
+    pub(crate) fn save_merge_buffers(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
+        if self.modified_buffers.is_empty() {
+            self.push_info("  Nothing to save.", LineStyle::Dim);
+            self.render(stdout)?;
+            return Ok(());
+        }
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let names: Vec<String> = self.modified_buffers.iter().cloned().collect();
+        let mut saved = Vec::new();
+        for name in names {
+            if let Some(idx) = self.buffers.iter().position(|b| b.name() == name) {
+                let mut content = self.buffers[idx]
+                    .lines()
+                    .iter()
+                    .map(|l| l.content().clone())
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                // Ensure the file on disk ends with a newline, matching
+                // normal POSIX text-file conventions. Buffer content is
+                // stored as separate lines with no trailing terminator, so
+                // a plain join() would otherwise leave the last line
+                // unterminated on every save.
+                if !content.is_empty() && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+                let file_path = project_root.join(&name);
+                std::fs::write(&file_path, &content)?;
+                self.modified_buffers.remove(&name);
+                saved.push(name);
+            }
+        }
+        if !saved.is_empty() {
+            self.push_info(
+                format!("  💾 Saved {} file(s): {}", saved.len(), saved.join(", ")),
+                LineStyle::ToolResult,
+            );
+        } else {
+            self.push_info("  Nothing to save.", LineStyle::Dim);
+        }
+        self.render(stdout)?;
+        Ok(())
+    }
     pub(super) fn handle_merge_key(
         &mut self,
         key: KeyEvent,
