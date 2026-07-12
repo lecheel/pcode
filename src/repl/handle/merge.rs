@@ -960,58 +960,6 @@ impl Repl {
                 }
                 self.merge_cursor = line_idx;
             }
-            KeyCode::Char('d') | KeyCode::Char('D')
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    || key.modifiers.contains(KeyModifiers::META) =>
-            {
-                let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
-                let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
-                let file_path = project_root.join(&hunk.filename);
-                
-                let buf_idx = self.buffers.iter().position(|b| b.name() == hunk.filename);
-                let is_buffer = self.merge_buffer_apply || buf_idx.is_some();
-                
-                let old_content = if let Some(idx) = buf_idx {
-                    self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<_>>().join("\n")
-                } else {
-                    std::fs::read_to_string(&file_path).unwrap_or_default()
-                };
-                
-                let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
-                if !file_lines.is_empty() {
-                    push_undo(&hunk.filename, &old_content);
-                    self.merge_last_modified = Some((hunk.filename.clone(), is_buffer));
-                    
-                    let line_idx = self.merge_cursor.min(file_lines.len() - 1);
-                    file_lines.remove(line_idx);
-                    let new_content = file_lines.join("\n") + "\n";
-                    
-                    if let Some(idx) = buf_idx {
-                        self.buffers[idx].clear();
-                        self.buffers[idx].push_str(&new_content, LineStyle::Plain);
-                    } else if self.merge_buffer_apply {
-                        let idx = self.buffers.len();
-                        self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
-                        self.buffers[idx].push_str(&new_content, LineStyle::Plain);
-                    }
-                    
-                    if !self.merge_buffer_apply {
-                        std::fs::write(&file_path, &new_content)?;
-                    }
-                    self.modified_buffers.insert(hunk.filename.clone());
-
-                    if self.merge_match_idx > line_idx {
-                        self.merge_match_idx = self.merge_match_idx.saturating_sub(1);
-                        self.merge_match_end = self.merge_match_end.saturating_sub(1);
-                    } else if self.merge_match_end > line_idx {
-                        self.merge_match_end = self.merge_match_end.saturating_sub(1);
-                    }
-                    if self.merge_cursor >= file_lines.len() {
-                        self.merge_cursor = file_lines.len().saturating_sub(1);
-                    }
-                    self.push_info("  🗑️ Line deleted.", LineStyle::Info);
-                }
-            }
             KeyCode::Char('u') => {
                 let hunk_filename = self.pending_merge.as_ref().unwrap()[self.merge_index]
                     .filename
@@ -1128,46 +1076,6 @@ impl Repl {
                 self.pending_merge = None;
                 self.mode = Mode::Insert;
                 self.push_info("  Exited Merge Mode.", LineStyle::Dim);
-            }
-            KeyCode::Char('x') | KeyCode::Char('X')
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    || key.modifiers.contains(KeyModifiers::META) =>
-            {
-                self.pending_merge = None;
-                self.mode = Mode::Insert;
-                self.push_info("  Exited Merge Mode.", LineStyle::Dim);
-            }
-            KeyCode::Char('w') | KeyCode::Char('W')
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    || key.modifiers.contains(KeyModifiers::META) =>
-            {
-                let mut saved_count = 0;
-                let modified_files: Vec<String> = self.modified_buffers.iter().cloned().collect();
-                for file in &modified_files {
-                    if let Some(idx) = self.buffers.iter().position(|b| b.name() == file) {
-                        let root = std::path::PathBuf::from(&self.config.tools.project_root);
-                        let path = root.join(file);
-                        let content: String = self.buffers[idx]
-                            .lines()
-                            .iter()
-                            .map(|l| l.content().clone())
-                            .collect::<Vec<String>>()
-                            .join("\n");
-                        if std::fs::write(&path, content).is_ok() {
-                            saved_count += 1;
-                        }
-                    }
-                }
-                self.modified_buffers.clear();
-                self.pending_merge = None;
-                self.mode = Mode::Normal;
-                self.push_info(
-                    format!(
-                        "  💾 Saved {} buffer(s) to disk. Exited Merge Mode.",
-                        saved_count
-                    ),
-                    LineStyle::ToolResult,
-                );
             }
             _ => {}
         }

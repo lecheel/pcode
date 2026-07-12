@@ -14,12 +14,33 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
-        if self.mode == Mode::Merge {
-            return self.handle_merge_key(key, stdout);
+        // 1. Unified global keybindings
+        if self.handle_global_key(&key, stdout)? {
+            return Ok(());
         }
+        // 2. Fallback to mode-specific handlers
+        match self.mode {
+            Mode::Normal => self.handle_normal_key(key, stdout)?,
+            Mode::Insert => self.handle_insert_key(key, stdout)?,
+            Mode::Command => self.handle_command_key(key, stdout)?,
+            Mode::Search => self.handle_search_key(key, stdout)?,
+            Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
+            Mode::Merge => self.handle_merge_key(key, stdout)?,
+            Mode::GitLog => self.handle_glog_key(key, stdout)?,
+            Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
+            Mode::FilePicker => self.handle_file_picker_key(key, stdout)?,
+        }
+        Ok(())
+    }
+    fn handle_global_key(
+        &mut self,
+        key: &KeyEvent,
+        stdout: &mut io::Stdout,
+    ) -> anyhow::Result<bool> {
         if self.fkey_help && key.code != KeyCode::Char('?') {
             self.fkey_help = false;
         }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.waiting {
                 self.push_info(
@@ -28,21 +49,11 @@ impl Repl {
                 );
                 self.scroll_to_bottom();
                 self.render(stdout)?;
-                return Ok(());
+                return Ok(true);
             }
-            match self.mode {
-                Mode::Normal => self.handle_normal_key(key, stdout)?,
-                Mode::Insert => self.handle_insert_key(key, stdout)?,
-                Mode::Command => self.handle_command_key(key, stdout)?,
-                Mode::Search => self.handle_search_key(key, stdout)?,
-                Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
-                Mode::Merge => self.handle_merge_key(key, stdout)?,
-                Mode::GitLog => self.handle_glog_key(key, stdout)?,
-                Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
-                Mode::FilePicker => self.handle_file_picker_key(key, stdout)?,
-            }
-            return Ok(());
+            return Ok(false);
         }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
             if !self.waiting {
                 if self.mode == Mode::FilePicker {
@@ -55,8 +66,9 @@ impl Repl {
                 }
                 self.render(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
+
         if (key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META))
             && (key.code == KeyCode::Char('b') || key.code == KeyCode::Char('B'))
         {
@@ -66,8 +78,9 @@ impl Repl {
                 self.show_buffer_picker();
             }
             self.render(stdout)?;
-            return Ok(());
+            return Ok(true);
         }
+
         if key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::META) {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -91,7 +104,7 @@ impl Repl {
                         }
                         self.render(stdout)?;
                     }
-                    return Ok(());
+                    return Ok(true);
                 }
                 KeyCode::Char('w') | KeyCode::Char('W') => {
                     if self.buffer().name() == "SedChanges" {
@@ -100,7 +113,7 @@ impl Repl {
                         self.execute_command("write", stdout)?;
                     }
                     self.render(stdout)?;
-                    return Ok(());
+                    return Ok(true);
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') => {
                     if !self.waiting {
@@ -110,33 +123,34 @@ impl Repl {
                         self.pending = None;
                         self.render(stdout)?;
                     }
-                    return Ok(());
+                    return Ok(true);
                 }
                 KeyCode::Char('x') | KeyCode::Char('X') => {
                     self.close_buffer();
                     self.render(stdout)?;
-                    return Ok(());
+                    return Ok(true);
                 }
                 KeyCode::Char('-') => {
                     self.switch_buffer(-1);
                     self.render(stdout)?;
-                    return Ok(());
+                    return Ok(true);
                 }
                 KeyCode::Char('=') => {
                     self.switch_buffer(1);
                     self.render(stdout)?;
-                    return Ok(());
+                    return Ok(true);
                 }
                 _ => {}
             }
         }
+
         if key.code == KeyCode::F(12) {
             if self.pending_snippet.take().is_some() {
                 self.editor.clear();
                 self.push_info("  ❌ Cancelled snippet input.", LineStyle::Dim);
                 self.scroll_to_bottom();
                 self.render(stdout)?;
-                return Ok(());
+                return Ok(true);
             }
             if self.waiting {
                 if let Some(tx) = self.cancel_tx.take() {
@@ -146,20 +160,20 @@ impl Repl {
                 self.scroll_to_bottom();
                 self.render(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
+
         if key.code == KeyCode::F(4) {
             self.show_git_hunk_popup();
             self.render(stdout)?;
-            return Ok(());
+            return Ok(true);
         }
         if key.code == KeyCode::F(7) {
             if !self.waiting {
                 self.enter_gdiff_mode(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
-
         if key.code == KeyCode::F(8) {
             if !self.waiting {
                 if self.popup.active {
@@ -169,9 +183,8 @@ impl Repl {
                 }
                 self.render(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
-
         if key.code == KeyCode::F(9) {
             if !self.waiting {
                 let content: String = self
@@ -227,12 +240,12 @@ impl Repl {
                 }
                 self.render(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
         if key.code == KeyCode::F(11) {
             self.execute_command("workflow", stdout)?;
             self.render(stdout)?;
-            return Ok(());
+            return Ok(true);
         }
         if key.code == KeyCode::F(10) {
             if self.popup.active {
@@ -241,23 +254,22 @@ impl Repl {
                 self.show_skill_group_popup();
             }
             self.render(stdout)?;
-            return Ok(());
+            return Ok(true);
         }
         if key.code == KeyCode::F(1) {
             self.show_git_status(stdout, None)?;
-            return Ok(());
+            return Ok(true);
         }
         if key.code == KeyCode::F(6) {
             self.execute_command("glog", stdout)?;
             self.render(stdout)?;
-            return Ok(());
+            return Ok(true);
         }
-        // 1. Check if any skill group explicitly claims this F-key
+
         let key_str = match key.code {
             KeyCode::F(n) => Some(format!("F{}", n)),
             _ => None,
         };
-
         if let Some(k) = key_str {
             if !self.waiting {
                 if let Some(idx) = self
@@ -270,42 +282,36 @@ impl Repl {
                         .get(idx)
                         .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
                         .unwrap_or_default();
-
                     self.agent_mut().set_skill_group(idx);
                     self.cached_skill_group = idx;
                     self.popup.hide();
-
                     self.push_info(
                         format!("  {} {} — {}", emoji, name, description),
                         LineStyle::ToolResult,
                     );
                     self.scroll_to_bottom();
                     self.render(stdout)?;
-                    return Ok(());
+                    return Ok(true);
                 }
             }
         }
 
-        // 2. Fallback to default aliases for F1, F2, F3 if not explicitly mapped
         let target_skill_name = match key.code {
             KeyCode::F(1) => Some("chat"),
             KeyCode::F(2) => Some("edit"),
             KeyCode::F(3) => Some("full"),
             _ => None,
         };
-
         if let Some(name) = target_skill_name {
             if !self.waiting {
                 if let Some(idx) = self.agent_mut().set_skill_group_by_name(name) {
                     self.cached_skill_group = idx;
                     self.popup.hide();
-
                     let (emoji, skill_name, description) = self
                         .skill_groups()
                         .get(idx)
                         .map(|g| (g.emoji.clone(), g.name.clone(), g.description.clone()))
                         .unwrap_or_default();
-
                     self.push_info(
                         format!("  {} {} — {}", emoji, skill_name, description),
                         LineStyle::ToolResult,
@@ -314,8 +320,9 @@ impl Repl {
                     self.render(stdout)?;
                 }
             }
-            return Ok(());
+            return Ok(true);
         }
+
         if key.code == KeyCode::Insert {
             if !self.waiting {
                 match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
@@ -367,14 +374,17 @@ impl Repl {
                 }
                 self.render(stdout)?;
             }
-            return Ok(());
+            return Ok(true);
         }
+
         if self.popup.active && self.popup_mode != PopupMode::WhichKey {
-            return self.handle_popup_key(key, stdout);
+            return self.handle_popup_key(*key, stdout).map(|_| true);
         }
+
         if matches!(self.mode, Mode::Command) {
-            return self.handle_command_key(key, stdout);
+            return self.handle_command_key(*key, stdout).map(|_| true);
         }
+
         if self.waiting {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
@@ -394,20 +404,10 @@ impl Repl {
                 }
                 _ => {}
             }
-            return Ok(());
+            return Ok(true);
         }
-        match self.mode {
-            Mode::Normal => self.handle_normal_key(key, stdout)?,
-            Mode::Insert => self.handle_insert_key(key, stdout)?,
-            Mode::Command => self.handle_command_key(key, stdout)?,
-            Mode::Search => self.handle_search_key(key, stdout)?,
-            Mode::Visual | Mode::VisualLine => self.handle_visual_key(key, stdout)?,
-            Mode::Merge => self.handle_merge_key(key, stdout)?,
-            Mode::GitLog => self.handle_glog_key(key, stdout)?,
-            Mode::GitDiff => self.handle_gdiff_key(key, stdout)?,
-            Mode::FilePicker => self.handle_file_picker_key(key, stdout)?,
-        }
-        Ok(())
+
+        Ok(false)
     }
 
     pub(super) fn handle_file_picker_key(
