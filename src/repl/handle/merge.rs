@@ -613,7 +613,11 @@ impl Repl {
                 }
             }
             let new_len = file_lines.len();
-            self.merge_cursor = if new_len == 0 { 0 } else { line_idx.min(new_len - 1) };
+            self.merge_cursor = if new_len == 0 {
+                0
+            } else {
+                line_idx.min(new_len - 1)
+            };
             self.merge_cursor_col = 0;
             self.push_info("  🗑️  Deleted line", LineStyle::Dim);
             self.render(stdout)?;
@@ -838,6 +842,9 @@ impl Repl {
                     LineStyle::Info,
                 );
             }
+            KeyCode::Char('s') => {
+                self.show_merge_summary_popup();
+            }
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 if self.merge_candidates.is_empty() {
                     self.push_info("  No candidates found.", LineStyle::Error);
@@ -918,7 +925,8 @@ impl Repl {
                         self.merge_cursor_col = c;
                         if let Some(line) = file_lines.get(l) {
                             let len = line.graphemes(true).count();
-                            self.merge_cursor_col = self.merge_cursor_col.min(len.saturating_sub(1));
+                            self.merge_cursor_col =
+                                self.merge_cursor_col.min(len.saturating_sub(1));
                         }
                         if l < self.merge_file_scroll {
                             self.merge_file_scroll = l.saturating_sub(2);
@@ -1127,24 +1135,29 @@ impl Repl {
                 let hunk = self.pending_merge.as_ref().unwrap()[self.merge_index].clone();
                 let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
                 let file_path = project_root.join(&hunk.filename);
-                
+
                 let buf_idx = self.buffers.iter().position(|b| b.name() == hunk.filename);
                 let is_buffer = self.merge_buffer_apply || buf_idx.is_some();
-                
+
                 let old_content = if let Some(idx) = buf_idx {
-                    self.buffers[idx].lines().iter().map(|l| l.content().clone()).collect::<Vec<_>>().join("\n")
+                    self.buffers[idx]
+                        .lines()
+                        .iter()
+                        .map(|l| l.content().clone())
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 } else {
                     std::fs::read_to_string(&file_path).unwrap_or_default()
                 };
-                
+
                 push_undo(&hunk.filename, &old_content);
                 self.merge_last_modified = Some((hunk.filename.clone(), is_buffer));
-                
+
                 let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
                 let new_content = file_lines.join("\n") + "\n";
-                
+
                 if let Some(idx) = buf_idx {
                     self.buffers[idx].clear();
                     self.buffers[idx].push_str(&new_content, LineStyle::Plain);
@@ -1153,7 +1166,7 @@ impl Repl {
                     self.buffers.push(ResponseBuffer::with_name(&hunk.filename));
                     self.buffers[idx].push_str(&new_content, LineStyle::Plain);
                 }
-                
+
                 if !self.merge_buffer_apply {
                     std::fs::write(&file_path, &new_content)?;
                 }
@@ -1288,6 +1301,141 @@ impl Repl {
         }
         self.render(stdout)?;
         Ok(())
+    }
+
+    /// Shows a compact popup summarizing ALL patch hunks: match percentage
+    /// and candidate count for each, formatted 3-items-per-line.
+    /// Triggered by pressing `S` in merge mode.
+    fn show_merge_summary_popup(&mut self) {
+        let hunks = match &self.pending_merge {
+            Some(h) => h.clone(),
+            None => return,
+        };
+        let project_root = std::path::PathBuf::from(&self.config.tools.project_root);
+
+        // Pre-compute (score, candidate_count, applied, filename) for every hunk
+        let mut summaries: Vec<(u32, usize, bool, String)> = Vec::with_capacity(hunks.len());
+        for (i, hunk) in hunks.iter().enumerate() {
+            let file_path = project_root.join(&hunk.filename);
+            let file_content =
+                if let Some(idx) = self.buffers.iter().position(|b| b.name() == hunk.filename) {
+                    self.buffers[idx]
+                        .lines()
+                        .iter()
+                        .map(|l| l.content().clone())
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                } else {
+                    std::fs::read_to_string(&file_path).unwrap_or_default()
+                };
+            let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+
+            let search = &hunk.search;
+            let (score, cand_count) = if search.is_empty() || file_lines.is_empty() {
+                (0u32, 0usize)
+            } else {
+                let mut result = crate::diff::find_best_match(search, &file_lines, false);
+                if result.candidates.is_empty() {
+                    result = loose_best_match(search, &file_lines);
+                }
+                // Only count candidates with a score strictly greater than 50%
+                let count = result
+                    .candidates
+                    .iter()
+                    .filter(|(_, _, sc)| *sc > 50.0)
+                    .count();
+                (result.score.clamp(0.0, 100.0) as u32, count)
+            };
+
+            let applied = self.merge_applied.get(i).copied().unwrap_or(false);
+            let fname_short = hunk
+                .filename
+                .rsplit('/')
+                .next()
+                .unwrap_or(&hunk.filename)
+                .to_string();
+            summaries.push((score, cand_count, applied, fname_short));
+        }
+
+        // Pack 3 items per line
+        const ITEMS_PER_LINE: usize = 3;
+        let mut items: Vec<crate::repl::helper::PopupItem> = Vec::new();
+        let mut current_line = String::new();
+        let mut count_in_line = 0usize;
+
+        for (i, (score, cand_count, applied, fname)) in summaries.iter().enumerate() {
+            let icon = if *applied {
+                "✅"
+            } else if *score >= 100 {
+                "🎯"
+            } else if *score == 0 {
+                "❌"
+            } else if *score >= 80 {
+                "🟡"
+            } else {
+                "⏳"
+            };
+
+            // Add green color for 100% using ANSI escape codes
+            let score_display = if *score == 100 {
+                "\x1b[32m100%\x1b[0m".to_string()
+            } else {
+                format!("{}%", score)
+            };
+
+            // Compact: "✅ search 1 (100%) ( 2 cands ) file.rs"
+            let item_text = format!(
+                "{} search {} ({}) ( {} cand{} ) {}",
+                icon,
+                i + 1,
+                score_display,
+                cand_count,
+                if *cand_count == 1 { "" } else { "s" },
+                fname,
+            );
+
+            if count_in_line == 0 {
+                current_line = item_text;
+            } else {
+                current_line.push_str(" │ ");
+                current_line.push_str(&item_text);
+            }
+            count_in_line += 1;
+
+            if count_in_line >= ITEMS_PER_LINE {
+                items.push(crate::repl::helper::PopupItem {
+                    text: current_line.clone(),
+                    is_active: true,
+                    id: None,
+                });
+                current_line.clear();
+                count_in_line = 0;
+            }
+        }
+
+        if count_in_line > 0 {
+            items.push(crate::repl::helper::PopupItem {
+                text: current_line.clone(),
+                is_active: true,
+                id: None,
+            });
+        }
+
+        if items.is_empty() {
+            items.push(crate::repl::helper::PopupItem {
+                text: "No hunks found.".to_string(),
+                is_active: true,
+                id: None,
+            });
+        }
+
+        self.popup_mode = crate::repl::PopupMode::Message;
+        self.popup.show(
+            "Hunk Summary",
+            items,
+            0,
+            crate::repl::helper::PopupPosition::Center,
+        );
     }
 
     fn next_merge(&mut self) {
@@ -1478,7 +1626,7 @@ impl Repl {
             SetForegroundColor(match_color),
             Print(&match_label),
             SetForegroundColor(Color::Yellow),
-            Print("  [?] Help [a]pply [l]next "),
+            Print("  [?] Help [a]pply [l]next [S]ummary "),
             style::ResetColor
         )?;
         let start_y = 1;
@@ -1613,8 +1761,8 @@ impl Repl {
                     )?;
                 } else {
                     let disp = trunc(line, left_panel_content_w);
-                    let pad = left_panel_content_w
-                        .saturating_sub(UnicodeWidthStr::width(disp.as_str()));
+                    let pad =
+                        left_panel_content_w.saturating_sub(UnicodeWidthStr::width(disp.as_str()));
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
