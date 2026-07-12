@@ -225,13 +225,13 @@ async fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
-            "--fastpatch" => {
+            "--fastpatch" | "-p" => {
                 fastpatch_target = Some(args.next().unwrap_or_else(|| "todo.md".to_string()));
             }
             "--pb" => {
                 use_clipboard_patch = true;
             }
-            "--patch" | "-p" => {
+            "--patch" => {
                 let template = r#"Please apply changes using this aider style format all changed in single code block
 ```
 // src/filename1.rs

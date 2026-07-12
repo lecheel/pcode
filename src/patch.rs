@@ -4,7 +4,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 fn compute_hash<T: Hash>(t: &T) -> String {
@@ -368,6 +368,77 @@ pub fn run_clipboard_patch(
     }
     let mut newly_applied = Vec::new();
 
+    // Pre-score all hunks for summary: N(score%|cand)
+    let mut score_items: Vec<String> = Vec::new();
+    let mut eligible_count = 0usize;
+    for (i, hunk) in hunks.iter().enumerate() {
+        if hunk.search.is_empty() {
+            score_items.push(format!("{}(0%|0)", i + 1));
+            continue;
+        }
+        let path = &hunk.filename;
+        let resolved = match validate_path(path, &project_root, &config.tools.allow_paths) {
+            Ok(p) => p,
+            Err(_) => {
+                score_items.push(format!("{}(0%|0)", i + 1));
+                continue;
+            }
+        };
+        if !resolved.exists() {
+            score_items.push(format!("{}(0%|0)", i + 1));
+            continue;
+        }
+        let file_content = std::fs::read_to_string(&resolved).unwrap_or_default();
+        let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
+        let search_match = crate::diff::find_best_match(&hunk.search, &file_lines, true);
+        let score = search_match.score.clamp(0.0, 100.0) as u32;
+        let cand_count = search_match
+            .candidates
+            .iter()
+            .filter(|(_, _, sc)| *sc > 50.0)
+            .count();
+        if score == 100 {
+            score_items.push(format!("\x1b[32m{}(100%|{})\x1b[0m", i + 1, cand_count));
+        } else {
+            score_items.push(format!("{}({}%|{})", i + 1, score, cand_count));
+        }
+        if search_match.score > 90.0 {
+            let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines, true);
+            if replace_match.score < 95.0 {
+                let patch_str = format!(
+                    "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
+                    hunk.search.join("\n"),
+                    hunk.replace.join("\n")
+                );
+                let patch_hash = compute_hash(&patch_str);
+                if !applied_hashes.contains(&patch_hash) {
+                    eligible_count += 1;
+                }
+            }
+        }
+    }
+    results.push(format!("📊 Hunk scores: {}", score_items.join("  ")));
+
+    // Prompt Y/n once when any hunk is eligible (score > 90%)
+    let mut user_approved = true;
+    if eligible_count > 0 {
+        eprint!(
+            "Apply {} hunk(s) with score > 90%? [Y/n] ",
+            eligible_count
+        );
+        let _ = io::stderr().flush();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            return Err("Failed to read confirmation".to_string());
+        }
+        let ans = input.trim().to_lowercase();
+        user_approved = ans.is_empty() || ans == "y" || ans == "yes";
+        if !user_approved {
+            results.push("🚫 Apply cancelled by user.".to_string());
+            return Ok(results.join("\n\n"));
+        }
+    }
+
     for hunk in hunks {
         if hunk.search.is_empty() {
             continue;
@@ -413,7 +484,6 @@ pub fn run_clipboard_patch(
         let replace_match = crate::diff::find_best_match(&hunk.replace, &file_lines, true);
 
         // Prevent duplicate patches: if the replace block is already present, skip
-        // Prevent duplicate patches: if the replace block is already present, skip
         if replace_match.score >= 95.0 {
             results.push(format!("⏭️ {} skipped (already patched)", path));
             skipped_count += 1;
@@ -421,6 +491,15 @@ pub fn run_clipboard_patch(
         }
 
         if search_match.score > 90.0 {
+            if !user_approved {
+                results.push(format!(
+                    "🚫 {} not applied (user declined, Score: {:.1}%)",
+                    path, search_match.score
+                ));
+                failed_hunks.push(hunk.clone());
+                failed_count += 1;
+                continue;
+            }
             let mut new_lines: Vec<String> = file_lines[..search_match.file_start].to_vec();
             new_lines.extend(hunk.replace.clone());
             new_lines.extend(file_lines[search_match.file_end..].to_vec());
