@@ -267,9 +267,15 @@ impl Repl {
                             format!("  📜 Loaded skill: /{}", cmd_name),
                             LineStyle::Info,
                         );
+                        // Switch to 'Full' skill group to enable all native tools
+                        self.agent_mut().set_skill_group_by_name("Full");
+                        self.cached_skill_group = self.active_skill_group();
+
+                        // Override the system prompt with SKILL.md content
                         if let Some(msg) = self.agent_mut().session.messages.first_mut() {
                             msg["content"] = json!(skill_content);
                         }
+
                         final_input = user_req.clone();
                         check_input = user_req.clone();
                         skip_auto_switch = true;
@@ -278,45 +284,6 @@ impl Repl {
                             self.render(stdout)?;
                             return Ok(());
                         }
-                    } else {
-                        self.push_llm_line(
-                            format!("  ⚠️ Failed to read skill: /{}", cmd_name),
-                            LineStyle::Error,
-                        );
-                    }
-                } else {
-                    self.push_llm_line(
-                        format!("  ⚠️ Skill not found: /{}", cmd_name),
-                        LineStyle::Error,
-                    );
-                }
-            }
-        }
-
-        if !is_addition && final_input.starts_with('/') {
-            let input_clone = final_input.clone();
-            let parts: Vec<&str> = input_clone.splitn(2, ' ').collect();
-            let cmd_name = parts[0].trim_start_matches('/');
-            let user_req = parts.get(1).copied().unwrap_or("").trim().to_string();
-            
-            if let Some(config_dir) = dirs::config_dir() {
-                let skill_path = config_dir.join("pcode").join("skills").join(cmd_name).join("SKILL.md");
-                if skill_path.exists() {
-                    if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
-                        self.push_llm_line(
-                            format!("  📜 Loaded skill: /{}", cmd_name),
-                            LineStyle::Info,
-                        );
-                        final_input = if user_req.is_empty() {
-                            skill_content.clone()
-                        } else {
-                            format!("{}\n\n{}", skill_content, user_req)
-                        };
-                        check_input = if user_req.is_empty() {
-                            skill_content.clone()
-                        } else {
-                            user_req.clone()
-                        };
                     } else {
                         self.push_llm_line(
                             format!("  ⚠️ Failed to read skill: /{}", cmd_name),
