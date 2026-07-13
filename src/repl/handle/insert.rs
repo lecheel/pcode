@@ -92,7 +92,33 @@ impl Repl {
                 }
             }
             KeyCode::Tab => {
-                self.cmd_editor.tab_complete(COMMAND_LIST);
+                let content = self.editor.content().to_string();
+                if content.starts_with('/') && !content.contains(' ') {
+                    let current_skill = content.trim_start_matches('/');
+                    if let Some(config_dir) = dirs::config_dir() {
+                        let skills_dir = config_dir.join("pcode").join("skills");
+                        let mut candidates: Vec<String> = Vec::new();
+                        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                            for entry in entries.flatten() {
+                                if entry.path().is_dir() {
+                                    if let Some(name) = entry.file_name().to_str() {
+                                        if name.starts_with(current_skill) {
+                                            candidates.push(format!("/{}", name));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !candidates.is_empty() {
+                            let candidates_ref: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+                            self.editor.tab_complete(&candidates_ref);
+                            let new_content = self.editor.content().to_string();
+                            if candidates.len() == 1 && !new_content.ends_with(' ') {
+                                self.editor.insert_char(' ');
+                            }
+                        }
+                    }
+                }
             }
             KeyCode::Enter => {
                 if key.modifiers.contains(KeyModifiers::SHIFT)

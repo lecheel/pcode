@@ -8,6 +8,7 @@ use crate::repl::misc;
 use crate::repl::CommandResult;
 use crate::repl::Mode;
 use crossterm::event::{self, Event, KeyEventKind};
+use serde_json::json;
 use std::io;
 
 impl Repl {
@@ -243,13 +244,95 @@ impl Repl {
             return Ok(());
         }
 
-        let final_input = if let Some(s) = snippet {
+        let mut final_input = if let Some(s) = snippet {
             format!("{}\n\n{}", s, input)
         } else {
             input
         };
 
-        let input_lower = final_input.to_lowercase();
+        let mut check_input = final_input.clone();
+        let mut skip_auto_switch = false;
+
+        if !is_addition && final_input.starts_with('/') {
+            let input_clone = final_input.clone();
+            let parts: Vec<&str> = input_clone.splitn(2, ' ').collect();
+            let cmd_name = parts[0].trim_start_matches('/').to_string();
+            let user_req = parts.get(1).copied().unwrap_or("").trim().to_string();
+            
+            if let Some(config_dir) = dirs::config_dir() {
+                let skill_path = config_dir.join("pcode").join("skills").join(&cmd_name).join("SKILL.md");
+                if skill_path.exists() {
+                    if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                        self.push_llm_line(
+                            format!("  📜 Loaded skill: /{}", cmd_name),
+                            LineStyle::Info,
+                        );
+                        if let Some(msg) = self.agent_mut().session.messages.first_mut() {
+                            msg["content"] = json!(skill_content);
+                        }
+                        final_input = user_req.clone();
+                        check_input = user_req.clone();
+                        skip_auto_switch = true;
+                        if final_input.trim().is_empty() {
+                            self.mode = Mode::Normal;
+                            self.render(stdout)?;
+                            return Ok(());
+                        }
+                    } else {
+                        self.push_llm_line(
+                            format!("  ⚠️ Failed to read skill: /{}", cmd_name),
+                            LineStyle::Error,
+                        );
+                    }
+                } else {
+                    self.push_llm_line(
+                        format!("  ⚠️ Skill not found: /{}", cmd_name),
+                        LineStyle::Error,
+                    );
+                }
+            }
+        }
+
+        if !is_addition && final_input.starts_with('/') {
+            let input_clone = final_input.clone();
+            let parts: Vec<&str> = input_clone.splitn(2, ' ').collect();
+            let cmd_name = parts[0].trim_start_matches('/');
+            let user_req = parts.get(1).copied().unwrap_or("").trim().to_string();
+            
+            if let Some(config_dir) = dirs::config_dir() {
+                let skill_path = config_dir.join("pcode").join("skills").join(cmd_name).join("SKILL.md");
+                if skill_path.exists() {
+                    if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
+                        self.push_llm_line(
+                            format!("  📜 Loaded skill: /{}", cmd_name),
+                            LineStyle::Info,
+                        );
+                        final_input = if user_req.is_empty() {
+                            skill_content.clone()
+                        } else {
+                            format!("{}\n\n{}", skill_content, user_req)
+                        };
+                        check_input = if user_req.is_empty() {
+                            skill_content.clone()
+                        } else {
+                            user_req.clone()
+                        };
+                    } else {
+                        self.push_llm_line(
+                            format!("  ⚠️ Failed to read skill: /{}", cmd_name),
+                            LineStyle::Error,
+                        );
+                    }
+                } else {
+                    self.push_llm_line(
+                        format!("  ⚠️ Skill not found: /{}", cmd_name),
+                        LineStyle::Error,
+                    );
+                }
+            }
+        }
+
+        let input_lower = check_input.to_lowercase();
 
         let code_keywords = [
             "impl ",
@@ -263,9 +346,7 @@ impl Repl {
             "debug ",
         ];
         let is_code_request = code_keywords.iter().any(|kw| input_lower.starts_with(kw));
-
-        // Inside submit_input, replace the is_code_request block with:
-        if is_code_request && self.active_skill_group() == 0 {
+        if is_code_request && self.active_skill_group() == 0 && !skip_auto_switch {
             if self.config.repl.auto_enable_tools_on_code_request {
                 let (code_idx, group_name) = {
                     let groups = self.skill_groups();
