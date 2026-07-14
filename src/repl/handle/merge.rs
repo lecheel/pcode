@@ -1528,7 +1528,6 @@ impl Repl {
 
         let left_width = split_x.saturating_sub(1);
         let right_width = term_width.saturating_sub(split_x).saturating_sub(1);
-
         fn trunc(s: &str, max_w: usize) -> String {
             if UnicodeWidthStr::width(s) <= max_w {
                 return s.to_string();
@@ -1546,56 +1545,7 @@ impl Repl {
             out.push_str("...");
             out
         }
-
-        // ── header row: description (left) | filename (right) ──
-        // ── header row: description (left) | filename (right) ──
-        let desc = " detail full content sync the line to left";
-        let desc_disp = trunc(desc, left_width.saturating_sub(1));
-        let desc_pad = left_width.saturating_sub(UnicodeWidthStr::width(desc_disp.as_str()) + 1);
-        let fname_disp = trunc(&hunk.filename, right_width.saturating_sub(1));
-        let fname_pad = right_width.saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
-
-        let left_hdr_bg = if self.merge_left_active {
-            Color::Cyan
-        } else {
-            Color::DarkGrey
-        };
-        let left_hdr_fg = if self.merge_left_active {
-            Color::Black
-        } else {
-            Color::White
-        };
-        let right_hdr_bg = if !self.merge_left_active {
-            Color::Cyan
-        } else {
-            Color::DarkGrey
-        };
-        let right_hdr_fg = if !self.merge_left_active {
-            Color::Black
-        } else {
-            Color::Cyan
-        };
-
-        queue!(
-            stdout,
-            cursor::MoveTo(0, 0),
-            SetBackgroundColor(left_hdr_bg),
-            SetForegroundColor(left_hdr_fg),
-            SetAttribute(Attribute::Bold),
-            Print(format!(" {}{}", desc_disp, " ".repeat(desc_pad))),
-            cursor::MoveTo(split_x as u16, 0),
-            SetBackgroundColor(Color::DarkGrey),
-            SetForegroundColor(Color::DarkGrey),
-            Print("│"),
-            cursor::MoveTo((split_x + 1) as u16, 0),
-            SetBackgroundColor(right_hdr_bg),
-            SetForegroundColor(right_hdr_fg),
-            Print(format!(" {}{}", fname_disp, " ".repeat(fname_pad))),
-            style::ResetColor,
-            SetAttribute(Attribute::Reset)
-        )?;
-
-        // ── build right panel rows (the patch) ──────────────────
+        
         let is_applied = self
             .merge_applied
             .get(self.merge_index)
@@ -1616,7 +1566,6 @@ impl Repl {
                 std::fs::read_to_string(&file_path).unwrap_or_default()
             };
         let file_lines: Vec<String> = file_content.lines().map(String::from).collect();
-
         if self.merge_match_end <= self.merge_match_idx {
             self.merge_match_end = self.merge_match_idx + 1;
         }
@@ -1626,7 +1575,6 @@ impl Repl {
         let actual_match_idx = self.merge_match_idx;
         let matched_end = self.merge_match_end.min(file_lines.len());
         let cursor_line = self.merge_cursor;
-        // ── LCS diff: search block vs the currently matched block in the file ──
         let matched_lines: Vec<String> = if actual_match_idx < matched_end {
             file_lines[actual_match_idx..matched_end].to_vec()
         } else {
@@ -1646,6 +1594,66 @@ impl Repl {
         } else {
             (format!("match:{}%", match_percent), Color::Yellow)
         };
+
+        let search_loc = hunk.search.len();
+        let match_loc = matched_lines.len();
+        
+        let fname_disp = trunc(&hunk.filename, right_width.saturating_sub(1));
+        let fname_pad = right_width.saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
+        let left_hdr_bg = Color::DarkGrey;
+        let left_hdr_fg = if self.merge_left_active {
+            Color::Cyan
+        } else {
+            Color::White
+        };
+        let right_hdr_bg = Color::DarkGrey;
+        let right_hdr_fg = if !self.merge_left_active {
+            Color::Cyan
+        } else {
+            Color::White
+        };
+        
+        let loc_color = Color::Cyan;
+        let left_hdr_parts = vec![
+            (" match: ".to_string(), left_hdr_fg),
+            (format!("{}%", match_percent), match_color),
+            (" (".to_string(), left_hdr_fg),
+            (format!("{}", search_loc), loc_color),
+            (" vs ".to_string(), left_hdr_fg),
+            (format!("{}", match_loc), loc_color),
+            (" LOC)".to_string(), left_hdr_fg),
+        ];
+        
+        let mut left_hdr_w = 0;
+        for (s, _) in &left_hdr_parts {
+            left_hdr_w += UnicodeWidthStr::width(s.as_str());
+        }
+        let left_hdr_pad = left_width.saturating_sub(left_hdr_w + 1);
+        
+        queue!(
+            stdout,
+            cursor::MoveTo(0, 0),
+            SetBackgroundColor(left_hdr_bg),
+            SetAttribute(Attribute::Bold),
+        )?;
+        for (s, c) in &left_hdr_parts {
+            queue!(stdout, SetForegroundColor(*c), Print(s))?;
+        }
+        queue!(
+            stdout,
+            SetForegroundColor(left_hdr_fg),
+            Print(" ".repeat(left_hdr_pad)),
+            cursor::MoveTo(split_x as u16, 0),
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::DarkGrey),
+            Print("│"),
+            cursor::MoveTo((split_x + 1) as u16, 0),
+            SetBackgroundColor(right_hdr_bg),
+            SetForegroundColor(right_hdr_fg),
+            Print(format!(" {}{}", fname_disp, " ".repeat(fname_pad))),
+            style::ResetColor,
+            SetAttribute(Attribute::Reset)
+        )?;
         let hunk_summary = if hunks.len() > 1 {
             let mut s = String::new();
             for (i, applied) in self.merge_applied.iter().enumerate() {
