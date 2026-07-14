@@ -1762,7 +1762,7 @@ impl Repl {
                     _ => Color::DarkGrey,
                 };
                 let (fg, bg) = if is_cursor {
-                    (Color::Black, Color::Cyan)
+                    (Color::White, Color::Cyan)
                 } else if is_applied_line {
                     (Color::Black, Color::DarkYellow)
                 } else if is_in_match {
@@ -1787,16 +1787,61 @@ impl Repl {
                             right_part.push_str(g);
                         }
                     }
-                    let left_w = UnicodeWidthStr::width(left_part.as_str());
                     let mid_str = if mid_part.is_empty() {
                         " ".to_string()
                     } else {
                         mid_part.clone()
                     };
                     let mid_w = UnicodeWidthStr::width(mid_str.as_str());
-                    let right_w = UnicodeWidthStr::width(right_part.as_str());
-                    let total_w = left_w + mid_w + right_w + 1;
-                    let pad = left_panel_content_w.saturating_sub(total_w);
+                    // Budget must match the normal row exactly: normal rows
+                    // print " " + disp, where disp is padded/truncated to
+                    // `left_panel_content_w`. That leading " " is printed
+                    // literally below via format!(" {}", left_part) and is
+                    // NOT part of this budget - subtracting 1 for it again
+                    // here was the remaining off-by-one shifting the divider.
+                    let avail = left_panel_content_w;
+                    let content_avail = avail.saturating_sub(mid_w);
+                    // Clip left/right around the cursor instead of printing
+                    // the whole line unclipped: an unclipped long line was
+                    // overflowing straight through the vertical divider and
+                    // into the right panel ("long line" glitch).
+                    let left_w_full = UnicodeWidthStr::width(left_part.as_str());
+                    let (left_part, left_w) = if left_w_full > content_avail {
+                        // Keep the tail (closest to the cursor) so the
+                        // visible window scrolls with the cursor.
+                        let mut w = 0usize;
+                        let mut kept = String::new();
+                        for g in left_part.graphemes(true).rev() {
+                            let gw = UnicodeWidthStr::width(g);
+                            if w + gw > content_avail {
+                                break;
+                            }
+                            kept.insert_str(0, g);
+                            w += gw;
+                        }
+                        (kept, w)
+                    } else {
+                        (left_part, left_w_full)
+                    };
+                    let right_avail = content_avail.saturating_sub(left_w);
+                    let right_w_full = UnicodeWidthStr::width(right_part.as_str());
+                    let (right_part, right_w) = if right_w_full > right_avail {
+                        let mut w = 0usize;
+                        let mut kept = String::new();
+                        for g in right_part.graphemes(true) {
+                            let gw = UnicodeWidthStr::width(g);
+                            if w + gw > right_avail {
+                                break;
+                            }
+                            kept.push_str(g);
+                            w += gw;
+                        }
+                        (kept, w)
+                    } else {
+                        (right_part, right_w_full)
+                    };
+                    let total_w = left_w + mid_w + right_w;
+                    let pad = avail.saturating_sub(total_w);
                     queue!(
                         stdout,
                         cursor::MoveTo(0, y),
@@ -1807,6 +1852,7 @@ impl Repl {
                         Print(diff_char),
                         SetBackgroundColor(bg),
                         SetForegroundColor(fg),
+                        SetAttribute(Attribute::Bold),
                         Print(format!(" {}", left_part)),
                         SetBackgroundColor(Color::White),
                         SetForegroundColor(Color::Black),
@@ -1814,6 +1860,8 @@ impl Repl {
                         SetBackgroundColor(bg),
                         SetForegroundColor(fg),
                         Print(&right_part),
+                        SetAttribute(Attribute::Reset),
+                        SetBackgroundColor(bg),
                         Print(" ".repeat(pad)),
                         style::ResetColor
                     )?;
