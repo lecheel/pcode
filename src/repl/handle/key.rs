@@ -37,6 +37,12 @@ impl Repl {
         key: &KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<bool> {
+        if key.code == KeyCode::Esc {
+            if self.status_error.take().is_some() {
+                self.render(stdout)?;
+                return Ok(true);
+            }
+        }
         if self.fkey_help && key.code != KeyCode::Char('?') {
             self.fkey_help = false;
         }

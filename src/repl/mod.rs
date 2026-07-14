@@ -133,6 +133,7 @@ pub struct Repl {
     pub(crate) gdiff_cursor: usize,
     pub(crate) file_picker: Option<FilePickerState>,
     pub(crate) yank_register: Vec<BufferLine>,
+    pub(crate) status_error: Option<String>,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -214,6 +215,7 @@ impl Repl {
             gdiff_cursor: 0,
             file_picker: None,
             yank_register: Vec::new(),
+            status_error: None,
         }
     }
 
@@ -263,26 +265,42 @@ impl Repl {
 
     pub(crate) fn push_command_info(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.console_buffer_idx();
-        self.buffers[idx].push(BufferLine::new(content, style));
+        let content_str = content.into();
+        self.buffers[idx].push(BufferLine::new(content_str.clone(), style));
         self.active_buffer = idx;
         let h = self.response_area_height();
         let w = self.content_width();
         self.buffers[idx].scroll_to_bottom(h, w);
+        if style == LineStyle::Error {
+            self.status_error = Some(content_str);
+        } else {
+            self.status_error = None;
+        }
     }
-
     pub(crate) fn push_info(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.console_buffer_idx();
-        self.buffers[idx].push(BufferLine::new(content, style));
+        let content_str = content.into();
+        self.buffers[idx].push(BufferLine::new(content_str.clone(), style));
         if self.active_buffer == idx {
             let h = self.response_area_height();
             let w = self.content_width();
             self.buffers[idx].scroll_to_bottom(h, w);
         }
+        if style == LineStyle::Error {
+            self.status_error = Some(content_str);
+        } else {
+            self.status_error = None;
+        }
     }
-
     pub(crate) fn push_llm_line(&mut self, content: impl Into<String>, style: LineStyle) {
         let idx = self.llm_buffer_idx();
-        self.buffers[idx].push(BufferLine::new(content, style));
+        let content_str = content.into();
+        self.buffers[idx].push(BufferLine::new(content_str.clone(), style));
+        if style == LineStyle::Error {
+            self.status_error = Some(content_str);
+        } else if style != LineStyle::Plain && style != LineStyle::Dim {
+            self.status_error = None;
+        }
     }
 
     // ── scroll helpers ────────────────────────────────────────────
@@ -840,7 +858,28 @@ impl Repl {
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
             segments.push((" │ ".to_string(), Color::Grey));
-            segments.push(("[C-o] EDITOR [Ins] PastePatchCode".to_string(), Color::Cyan));
+            if let Some(err) = &self.status_error {
+                let max_w = 60;
+                let truncated = if UnicodeWidthStr::width(err.as_str()) > max_w {
+                    let mut s = String::new();
+                    let mut w = 0;
+                    for g in err.graphemes(true) {
+                        let gw = UnicodeWidthStr::width(g);
+                        if w + gw + 3 > max_w {
+                            break;
+                        }
+                        s.push_str(g);
+                        w += gw;
+                    }
+                    s.push_str("...");
+                    s
+                } else {
+                    err.clone()
+                };
+                segments.push((format!("{} ", truncated), Color::Red));
+            } else {
+                segments.push(("[C-o] EDITOR [Ins] PastePatchCode".to_string(), Color::Cyan));
+            }
             if !git_info.is_empty() {
                 segments.push((git_info, Color::Green));
             }

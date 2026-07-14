@@ -215,7 +215,7 @@ impl Repl {
             self.render(stdout)?;
             return Ok(());
         }
-
+        self.status_error = None;
         let snippet = self.pending_snippet.take();
         let is_addition = snippet.is_some();
 
