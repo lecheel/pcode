@@ -258,9 +258,13 @@ impl Repl {
             let parts: Vec<&str> = input_clone.splitn(2, ' ').collect();
             let cmd_name = parts[0].trim_start_matches('/').to_string();
             let user_req = parts.get(1).copied().unwrap_or("").trim().to_string();
-            
+
             if let Some(config_dir) = dirs::config_dir() {
-                let skill_path = config_dir.join("pcode").join("skills").join(&cmd_name).join("SKILL.md");
+                let skill_path = config_dir
+                    .join("pcode")
+                    .join("skills")
+                    .join(&cmd_name)
+                    .join("SKILL.md");
                 if skill_path.exists() {
                     if let Ok(skill_content) = std::fs::read_to_string(&skill_path) {
                         self.push_llm_line(

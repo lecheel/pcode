@@ -110,7 +110,8 @@ impl Repl {
                             }
                         }
                         if !candidates.is_empty() {
-                            let candidates_ref: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+                            let candidates_ref: Vec<&str> =
+                                candidates.iter().map(|s| s.as_str()).collect();
                             self.editor.tab_complete(&candidates_ref);
                             let new_content = self.editor.content().to_string();
                             if candidates.len() == 1 && !new_content.ends_with(' ') {

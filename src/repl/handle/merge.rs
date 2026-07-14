@@ -1544,7 +1544,7 @@ impl Repl {
             out.push_str("...");
             out
         }
-        
+
         let is_applied = self
             .merge_applied
             .get(self.merge_index)
@@ -1596,7 +1596,7 @@ impl Repl {
 
         let search_loc = hunk.search.len();
         let match_loc = matched_lines.len();
-        
+
         let fname_disp = trunc(&hunk.filename, right_width.saturating_sub(1));
         let fname_pad = right_width.saturating_sub(UnicodeWidthStr::width(fname_disp.as_str()) + 1);
         let left_hdr_bg = Color::DarkGrey;
@@ -1611,7 +1611,7 @@ impl Repl {
         } else {
             Color::White
         };
-        
+
         let loc_color = Color::Cyan;
         let replace_loc = hunk.replace.len();
         let hunk_idx_str = format!("[{}/{}]", self.merge_index + 1, hunks.len());
@@ -1629,7 +1629,7 @@ impl Repl {
             (format!("{}", replace_loc), loc_color),
             (" LOC (replace)".to_string(), left_hdr_fg),
         ];
-        
+
         let mut left_hdr_w = 0;
         for (s, _) in &left_hdr_parts {
             left_hdr_w += UnicodeWidthStr::width(s.as_str());
@@ -1641,7 +1641,7 @@ impl Repl {
         // background the line-clear left behind, i.e. black), which showed
         // up as a stray black cell right before the "│" separator.
         let left_hdr_pad = left_width.saturating_sub(left_hdr_w);
-        
+
         queue!(
             stdout,
             cursor::MoveTo(0, 0),

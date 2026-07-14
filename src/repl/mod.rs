@@ -888,7 +888,10 @@ impl Repl {
             if self.file_picker_loc.1 > 0 {
                 segments.push((" │ ".to_string(), Color::Grey));
                 segments.push((
-                    format!("📁 {}f {} LOC", self.file_picker_loc.0, self.file_picker_loc.1),
+                    format!(
+                        "📁 {}f {} LOC",
+                        self.file_picker_loc.0, self.file_picker_loc.1
+                    ),
                     Color::Yellow,
                 ));
             }
