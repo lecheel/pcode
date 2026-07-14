@@ -499,7 +499,7 @@ pub fn run_clipboard_patch(
             new_lines.extend(file_lines[search_match.file_end..].to_vec());
 
             let mut new_content = new_lines.join("\n");
-            if file_content.ends_with('\n') {
+            if !new_content.is_empty() && !new_content.ends_with('\n') {
                 new_content.push('\n');
             }
 
@@ -768,6 +768,9 @@ pub fn apply_patch(
             }
             if let Some(idx) = new_content.find(&search_str) {
                 new_content.replace_range(idx..idx + search_str.len(), &replace_str);
+                if !new_content.ends_with('\n') {
+                    new_content.push('\n');
+                }
                 count += 1;
             } else {
                 let file_lines: Vec<&str> = new_content.lines().collect();
@@ -826,7 +829,7 @@ pub fn apply_patch(
                     }
                     result_lines.extend(file_lines[end_line..].iter().map(|s| s.to_string()));
                     new_content = result_lines.join("\n");
-                    if content.ends_with('\n') && !new_content.ends_with('\n') {
+                    if !new_content.is_empty() && !new_content.ends_with('\n') {
                         new_content.push('\n');
                     }
                     count += 1;

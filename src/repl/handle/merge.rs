@@ -544,10 +544,7 @@ impl Repl {
                 // exist yet, defaulting to POSIX convention). Forcing it
                 // regardless of the original state was spuriously adding a
                 // trailing newline to files that intentionally have none.
-                let had_trailing_newline = std::fs::read_to_string(&file_path)
-                    .map(|c| c.ends_with('\n'))
-                    .unwrap_or(true);
-                if !content.is_empty() && !content.ends_with('\n') && had_trailing_newline {
+                if !content.is_empty() && !content.ends_with('\n') {
                     content.push('\n');
                 }
                 std::fs::write(&file_path, &content)?;
@@ -643,7 +640,7 @@ impl Repl {
                 String::new()
             } else {
                 let mut c = file_lines.join("\n");
-                if old_content.ends_with('\n') {
+                if !c.is_empty() && !c.ends_with('\n') {
                     c.push('\n');
                 }
                 c
@@ -1222,7 +1219,7 @@ impl Repl {
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
                 let mut new_content = file_lines.join("\n");
-                if old_content.ends_with('\n') {
+                if !new_content.is_empty() && !new_content.ends_with('\n') {
                     new_content.push('\n');
                 }
 
