@@ -14,11 +14,10 @@ impl Repl {
         key: KeyEvent,
         stdout: &mut io::Stdout,
     ) -> anyhow::Result<()> {
-        // 1. Unified global keybindings
         if self.handle_global_key(&key, stdout)? {
             return Ok(());
         }
-        // 2. Fallback to mode-specific handlers
+        self.status_info = None;
         match self.mode {
             Mode::Normal => self.handle_normal_key(key, stdout)?,
             Mode::Insert => self.handle_insert_key(key, stdout)?,
@@ -460,16 +459,10 @@ impl Repl {
                     }
                     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
                         Ok(_) => {
-                            self.push_command_info(
-                                format!("  📋 Copied {} files to clipboard:", files.len()),
-                                LineStyle::ToolResult,
-                            );
+                            self.status_info = Some(format!("📋 Copied {} files to clipboard", files.len()));
                         }
                         Err(e) => {
-                            self.push_command_info(
-                                format!("  ❌ Clipboard error: {}", e),
-                                LineStyle::Error,
-                            );
+                            self.status_error = Some(format!("❌ Clipboard error: {}", e));
                         }
                     }
                 }

@@ -134,6 +134,7 @@ pub struct Repl {
     pub(crate) file_picker: Option<FilePickerState>,
     pub(crate) yank_register: Vec<BufferLine>,
     pub(crate) status_error: Option<String>,
+    pub(crate) status_info: Option<String>,
     pub(crate) file_picker_loc: (usize, usize),
 }
 
@@ -217,6 +218,7 @@ impl Repl {
             file_picker: None,
             yank_register: Vec::new(),
             status_error: None,
+            status_info: None,
             file_picker_loc: (0, 0),
         }
     }
@@ -860,7 +862,26 @@ impl Repl {
             segments.push((self.config.server.model.clone(), Color::White));
             segments.push((format!("[{}]", self.config.server.api_type), Color::Magenta));
             segments.push((" │ ".to_string(), Color::Grey));
-            if let Some(err) = &self.status_error {
+            if let Some(info) = &self.status_info {
+                let max_w = 60;
+                let truncated = if UnicodeWidthStr::width(info.as_str()) > max_w {
+                    let mut s = String::new();
+                    let mut w = 0;
+                    for g in info.graphemes(true) {
+                        let gw = UnicodeWidthStr::width(g);
+                        if w + gw + 3 > max_w {
+                            break;
+                        }
+                        s.push_str(g);
+                        w += gw;
+                    }
+                    s.push_str("...");
+                    s
+                } else {
+                    info.clone()
+                };
+                segments.push((format!("{} ", truncated), Color::Green));
+            } else if let Some(err) = &self.status_error {
                 let max_w = 60;
                 let truncated = if UnicodeWidthStr::width(err.as_str()) > max_w {
                     let mut s = String::new();
@@ -1427,7 +1448,7 @@ impl Repl {
             let (file_count, loc_count) = picker.selected_loc();
             self.file_picker_loc = (file_count, loc_count);
             let footer = format!(
-                " {} files, {} LOC selected | [Space] Toggle [c] Copy [Enter] Open [q] Quit ",
+                " {} files, {} LOC selected | [Space] Toggle [C-c] Copy [Enter] Open [q] Quit ",
                 file_count, loc_count
             );
 
