@@ -241,6 +241,8 @@ pub struct ReplConfig {
     pub max_rounds: u32,
     #[serde(default = "default_true")]
     pub auto_enable_tools_on_code_request: bool,
+    #[serde(default = "default_true")]
+    pub auto_show_merge_summary: bool,
     #[serde(default)]
     pub skills: Vec<SkillGroupConfig>,
 }
@@ -253,6 +255,7 @@ impl Default for ReplConfig {
             sessions_dir: default_sessions_dir(),
             max_rounds: default_max_rounds(),
             auto_enable_tools_on_code_request: true,
+            auto_show_merge_summary: true,
             skills: Vec::new(),
         }
     }

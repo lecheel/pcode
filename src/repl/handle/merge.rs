@@ -448,7 +448,9 @@ impl Repl {
             "  🔀 Entering Merge Mode. [a]pply [r]ecalc  ma/mA set  [q]uit",
             LineStyle::Info,
         );
-        self.show_merge_summary_popup();
+        if self.config.repl.auto_show_merge_summary {
+            self.show_merge_summary_popup();
+        }
     }
 
     fn calc_merge_file_scroll(&mut self) {
@@ -1614,7 +1616,10 @@ impl Repl {
         };
         
         let loc_color = Color::Cyan;
+        let hunk_idx_str = format!("[{}/{}]", self.merge_index + 1, hunks.len());
         let left_hdr_parts = vec![
+            (" ".to_string(), left_hdr_fg),
+            (hunk_idx_str, Color::Yellow),
             (" match: ".to_string(), left_hdr_fg),
             (format!("{}%", match_percent), match_color),
             (" (".to_string(), left_hdr_fg),
@@ -1673,15 +1678,9 @@ impl Repl {
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::Yellow),
             Print(format!(
-                " 🔀 [{}/{}] {}",
-                self.merge_index + 1,
-                hunks.len(),
+                " 🔀 {}[?] Help [a]pply [w]rite [l]next [s]ummary ",
                 hunk_summary
             )),
-            SetForegroundColor(match_color),
-            Print(&match_label),
-            SetForegroundColor(Color::Yellow),
-            Print("  [?] Help [a]pply [w]rite [l]next [s]ummary "),
             style::ResetColor
         )?;
         let start_y = 1;
