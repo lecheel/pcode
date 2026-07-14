@@ -1616,6 +1616,7 @@ impl Repl {
         };
         
         let loc_color = Color::Cyan;
+        let replace_loc = hunk.replace.len();
         let hunk_idx_str = format!("[{}/{}]", self.merge_index + 1, hunks.len());
         let left_hdr_parts = vec![
             (" ".to_string(), left_hdr_fg),
@@ -1627,6 +1628,9 @@ impl Repl {
             (" vs ".to_string(), left_hdr_fg),
             (format!("{}", match_loc), loc_color),
             (" LOC)".to_string(), left_hdr_fg),
+            (" -> ".to_string(), left_hdr_fg),
+            (format!("{}", replace_loc), loc_color),
+            (" LOC (replace)".to_string(), left_hdr_fg),
         ];
         
         let mut left_hdr_w = 0;
