@@ -48,6 +48,9 @@ impl Repl {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            if self.mode == Mode::FilePicker {
+                return Ok(false);
+            }
             if self.waiting {
                 self.push_info(
                     "  ⏳ Still processing… press :q to force quit or F12 to abort",
@@ -437,7 +440,7 @@ impl Repl {
                 KeyCode::Up | KeyCode::Char('k') => picker.move_up(),
                 KeyCode::Char(' ') => picker.toggle_selection(),
                 KeyCode::Tab | KeyCode::Char('l') => picker.toggle_expand(),
-                KeyCode::Char('c') => {
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     let root = std::path::PathBuf::from(&self.config.tools.project_root);
                     let mut content = String::new();
                     let mut files = Vec::new();
@@ -461,8 +464,6 @@ impl Repl {
                                 format!("  📋 Copied {} files to clipboard:", files.len()),
                                 LineStyle::ToolResult,
                             );
-                            self.mode = Mode::Normal;
-                            self.file_picker = None;
                         }
                         Err(e) => {
                             self.push_command_info(
