@@ -535,15 +535,19 @@ impl Repl {
                     .map(|l| l.content().clone())
                     .collect::<Vec<String>>()
                     .join("\n");
-                // Ensure the file on disk ends with a newline, matching
-                // normal POSIX text-file conventions. Buffer content is
-                // stored as separate lines with no trailing terminator, so
-                // a plain join() would otherwise leave the last line
-                // unterminated on every save.
-                if !content.is_empty() && !content.ends_with('\n') {
+                let file_path = project_root.join(&name);
+                // Preserve the original file's trailing-newline state
+                // instead of unconditionally forcing one: only append '\n'
+                // if the file on disk already ended with one (or doesn't
+                // exist yet, defaulting to POSIX convention). Forcing it
+                // regardless of the original state was spuriously adding a
+                // trailing newline to files that intentionally have none.
+                let had_trailing_newline = std::fs::read_to_string(&file_path)
+                    .map(|c| c.ends_with('\n'))
+                    .unwrap_or(true);
+                if !content.is_empty() && !content.ends_with('\n') && had_trailing_newline {
                     content.push('\n');
                 }
-                let file_path = project_root.join(&name);
                 std::fs::write(&file_path, &content)?;
                 self.modified_buffers.remove(&name);
                 saved.push(name);
@@ -636,7 +640,11 @@ impl Repl {
             let new_content = if file_lines.is_empty() {
                 String::new()
             } else {
-                file_lines.join("\n") + "\n"
+                let mut c = file_lines.join("\n");
+                if old_content.ends_with('\n') {
+                    c.push('\n');
+                }
+                c
             };
             if let Some(idx) = buf_idx {
                 self.buffers[idx].clear();
@@ -1211,7 +1219,10 @@ impl Repl {
                 let mut file_lines: Vec<String> = old_content.lines().map(String::from).collect();
                 let line_idx = (self.merge_cursor + 1).min(file_lines.len());
                 file_lines.insert(line_idx, String::new());
-                let new_content = file_lines.join("\n") + "\n";
+                let mut new_content = file_lines.join("\n");
+                if old_content.ends_with('\n') {
+                    new_content.push('\n');
+                }
 
                 if let Some(idx) = buf_idx {
                     self.buffers[idx].clear();
