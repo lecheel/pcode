@@ -365,6 +365,7 @@ pub struct FilePickerState {
     pub scroll: usize,
     pub filter: String,
     pub flat_nodes: Vec<FlatNode>,
+    pub project_root: std::path::PathBuf,
 }
 
 impl FilePickerState {
@@ -377,9 +378,21 @@ impl FilePickerState {
             scroll: 0,
             filter: String::new(),
             flat_nodes: Vec::new(),
+            project_root: root.to_path_buf(),
         };
         state.update_flat();
         state
+    }
+    pub fn selected_loc(&self) -> (usize, usize) {
+        let mut loc_count = 0;
+        let mut file_count = 0;
+        for path in &self.selected {
+            if let Ok(content) = std::fs::read_to_string(self.project_root.join(path)) {
+                loc_count += content.lines().count();
+                file_count += 1;
+            }
+        }
+        (file_count, loc_count)
     }
 
     pub fn update_flat(&mut self) {

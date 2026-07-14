@@ -487,6 +487,7 @@ impl Repl {
                 KeyCode::Esc | KeyCode::Char('q') => {
                     self.mode = Mode::Normal;
                     self.file_picker = None;
+                    self.file_picker_loc = (0, 0);
                 }
                 KeyCode::Char(c) => {
                     picker.filter.push(c);

@@ -134,6 +134,7 @@ pub struct Repl {
     pub(crate) file_picker: Option<FilePickerState>,
     pub(crate) yank_register: Vec<BufferLine>,
     pub(crate) status_error: Option<String>,
+    pub(crate) file_picker_loc: (usize, usize),
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -216,6 +217,7 @@ impl Repl {
             file_picker: None,
             yank_register: Vec::new(),
             status_error: None,
+            file_picker_loc: (0, 0),
         }
     }
 
@@ -883,6 +885,13 @@ impl Repl {
             if !git_info.is_empty() {
                 segments.push((git_info, Color::Green));
             }
+            if self.file_picker_loc.1 > 0 {
+                segments.push((" │ ".to_string(), Color::Grey));
+                segments.push((
+                    format!("📁 {}f {} LOC", self.file_picker_loc.0, self.file_picker_loc.1),
+                    Color::Yellow,
+                ));
+            }
         }
         queue!(
             stdout,
@@ -1412,16 +1421,8 @@ impl Repl {
             }
 
             let footer_y = ra_height as u16;
-            let mut loc_count = 0;
-            let mut file_count = 0;
-            let root = std::path::PathBuf::from(&self.config.tools.project_root);
-            for path in &picker.selected {
-                if let Ok(content) = std::fs::read_to_string(root.join(path)) {
-                    loc_count += content.lines().count();
-                    file_count += 1;
-                }
-            }
-
+            let (file_count, loc_count) = picker.selected_loc();
+            self.file_picker_loc = (file_count, loc_count);
             let footer = format!(
                 " {} files, {} LOC selected | [Space] Toggle [c] Copy [Enter] Open [q] Quit ",
                 file_count, loc_count
