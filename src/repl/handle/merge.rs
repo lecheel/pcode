@@ -1637,7 +1637,13 @@ impl Repl {
         for (s, _) in &left_hdr_parts {
             left_hdr_w += UnicodeWidthStr::width(s.as_str());
         }
-        let left_hdr_pad = left_width.saturating_sub(left_hdr_w + 1);
+        // `left_hdr_w` already accounts for every column printed in
+        // left_hdr_parts, including its own leading " " entry - there's no
+        // separate column to reserve here. The old "+1" left one column
+        // between the padded header and the divider unpainted (whatever
+        // background the line-clear left behind, i.e. black), which showed
+        // up as a stray black cell right before the "│" separator.
+        let left_hdr_pad = left_width.saturating_sub(left_hdr_w);
         
         queue!(
             stdout,
