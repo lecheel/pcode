@@ -247,6 +247,32 @@ impl Repl {
 
     pub(super) fn show_file_picker(&mut self) {
         let root = std::path::PathBuf::from(&self.config.tools.project_root);
+        let canonical_root = match root.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                self.push_command_info(
+                    "  ❌ Invalid project root for file picker.",
+                    LineStyle::Error,
+                );
+                return;
+            }
+        };
+
+        let is_root = canonical_root == std::path::Path::new("/");
+        let is_home = std::env::var("HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .map(|h| canonical_root == h)
+            .unwrap_or(false);
+
+        if is_root || is_home {
+            self.push_command_info(
+                "  ❌ File picker disabled for root or home directory.",
+                LineStyle::Error,
+            );
+            return;
+        }
+
         self.file_picker = Some(crate::repl::helper::FilePickerState::new(&root));
         self.mode = Mode::FilePicker;
     }
