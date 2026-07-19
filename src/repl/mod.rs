@@ -910,7 +910,7 @@ impl Repl {
                 segments.push((" │ ".to_string(), Color::Grey));
                 segments.push((
                     format!(
-                        "📁 {}f {} LOC",
+                        "📁 {}f {} LOC (C-c) copy",
                         self.file_picker_loc.0, self.file_picker_loc.1
                     ),
                     Color::Yellow,
