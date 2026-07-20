@@ -341,7 +341,7 @@ impl Repl {
             return Ok(true);
         }
 
-        if key.code == KeyCode::Insert {
+        if (key.code == KeyCode::Insert || key.code == KeyCode::Char('*')) {
             if !self.waiting {
                 match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
                     Ok(content) => {
@@ -459,7 +459,8 @@ impl Repl {
                     }
                     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(content)) {
                         Ok(_) => {
-                            self.status_info = Some(format!("📋 Copied {} files to clipboard", files.len()));
+                            self.status_info =
+                                Some(format!("📋 Copied {} files to clipboard", files.len()));
                         }
                         Err(e) => {
                             self.status_error = Some(format!("❌ Clipboard error: {}", e));
