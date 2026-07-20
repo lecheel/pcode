@@ -448,9 +448,9 @@ impl FilePickerState {
 
 fn flatten(nodes: &[FileNode], depth: usize, filter: &str) -> Vec<FlatNode> {
     let mut result = Vec::new();
+    let filter_lower = filter.to_lowercase();
     for node in nodes {
-        let matches =
-            filter.is_empty() || node.path.to_lowercase().contains(&filter.to_lowercase());
+        let matches = filter.is_empty() || node.path.to_lowercase().contains(&filter_lower);
         if node.is_dir {
             let children = flatten(&node.children, depth + 1, filter);
             if !children.is_empty() || matches {

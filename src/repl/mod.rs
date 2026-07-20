@@ -136,6 +136,8 @@ pub struct Repl {
     pub(crate) status_error: Option<String>,
     pub(crate) status_info: Option<String>,
     pub(crate) file_picker_loc: (usize, usize),
+    pub(crate) cached_git_gutter: Option<Vec<char>>,
+    pub(crate) cached_git_gutter_name: String,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -220,6 +222,8 @@ impl Repl {
             status_error: None,
             status_info: None,
             file_picker_loc: (0, 0),
+            cached_git_gutter: None,
+            cached_git_gutter_name: String::new(),
         }
     }
 
@@ -516,7 +520,13 @@ impl Repl {
         let vscroll = self.buffer().scroll_offset();
         let visual_rows = self.buffer().visual_rows(width);
 
-        let gutter_statuses = self.get_git_gutter();
+        // Only recalculate git gutter if the active buffer name changed
+        let current_name = self.buffer().name().to_string();
+        if self.cached_git_gutter_name != current_name {
+            self.cached_git_gutter = self.get_git_gutter();
+            self.cached_git_gutter_name = current_name;
+        }
+        let gutter_statuses = self.cached_git_gutter.clone();
 
         let git_info = if let Some(gutter) = &gutter_statuses {
             let lines_count = gutter.iter().filter(|&&c| c == '+').count();
