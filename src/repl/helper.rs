@@ -689,6 +689,43 @@ impl super::Repl {
         self.popup.compact = true;
     }
 
+    pub(super) fn show_skill_complete_popup(&mut self) {
+        let items: Vec<PopupItem> = self
+            .skill_completion_candidates
+            .iter()
+            .enumerate()
+            .map(|(i, name)| PopupItem {
+                text: name.clone(),
+                is_active: i == self.skill_completion_idx,
+                id: Some(i),
+            })
+            .collect();
+        self.popup_mode = super::PopupMode::SkillComplete;
+        self.popup.show(
+            "Skills",
+            items,
+            self.skill_completion_idx,
+            PopupPosition::Bottom,
+        );
+        self.popup.show_filter = false;
+        self.popup.compact = true;
+        self.mode = super::Mode::Insert;
+    }
+
+    pub(super) fn sync_skill_complete_editor(&mut self) {
+        if !matches!(self.popup_mode, super::PopupMode::SkillComplete) {
+            return;
+        }
+        if let Some(item) = self.popup.items.get(self.popup.cursor) {
+            let text = item.text.clone();
+            self.editor.kill_to_start();
+            for ch in text.chars() {
+                self.editor.insert_char(ch);
+            }
+            self.skill_completion_idx = self.popup.cursor;
+        }
+    }
+
     pub(super) fn show_skill_group_popup(&mut self) {
         self.popup_mode = super::PopupMode::SkillGroups;
         let active_skill_group = self.active_skill_group();

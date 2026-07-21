@@ -49,6 +49,7 @@ pub enum PopupMode {
     GitHunks,
     FunctionList,
     WhichKey,
+    SkillComplete,
 
     Message,
 }
@@ -138,6 +139,10 @@ pub struct Repl {
     pub(crate) file_picker_loc: (usize, usize),
     pub(crate) cached_git_gutter: Option<Vec<char>>,
     pub(crate) cached_git_gutter_name: String,
+    pub(crate) skill_completion_candidates: Vec<String>,
+    pub(crate) skill_completion_idx: usize,
+    pub(crate) skill_completion_active: bool,
+    pub(crate) skill_completion_prefix: String,
 }
 
 const INPUT_AREA_ROWS: usize = 2;
@@ -224,6 +229,10 @@ impl Repl {
             file_picker_loc: (0, 0),
             cached_git_gutter: None,
             cached_git_gutter_name: String::new(),
+            skill_completion_candidates: Vec::new(),
+            skill_completion_idx: 0,
+            skill_completion_active: false,
+            skill_completion_prefix: String::new(),
         }
     }
 

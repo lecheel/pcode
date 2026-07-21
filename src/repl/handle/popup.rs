@@ -21,11 +21,38 @@ impl Repl {
         match key.code {
             KeyCode::Down | KeyCode::Tab => {
                 self.popup.move_down();
+                if matches!(self.popup_mode, PopupMode::SkillComplete) {
+                    self.sync_skill_complete_editor();
+                }
             }
             KeyCode::Up | KeyCode::BackTab => {
                 self.popup.move_up();
+                if matches!(self.popup_mode, PopupMode::SkillComplete) {
+                    self.sync_skill_complete_editor();
+                }
             }
             KeyCode::Enter => {
+                if !self.popup.items.is_empty()
+                    && matches!(self.popup_mode, PopupMode::SkillComplete)
+                {
+                    if let Some(item) = self.popup.items.get(self.popup.cursor) {
+                        let text = item.text.clone();
+                        self.editor.kill_to_start();
+                        for ch in text.chars() {
+                            self.editor.insert_char(ch);
+                        }
+                        if !text.ends_with(' ') {
+                            self.editor.insert_char(' ');
+                        }
+                    }
+                    self.popup.hide();
+                    self.skill_completion_active = false;
+                    self.skill_completion_candidates.clear();
+                    self.mode = Mode::Insert;
+                    self.render(stdout)?;
+                    return Ok(());
+                }
+
                 if !self.waiting && !self.popup.items.is_empty() {
                     match self.popup_mode {
                         PopupMode::SkillGroups => {
@@ -71,6 +98,7 @@ impl Repl {
                         PopupMode::WhichKey => {
                             // WhichKey popup is not interactive; handled by normal mode
                         }
+                        PopupMode::SkillComplete => {}
                         PopupMode::Message => {}
                     }
                 }
@@ -78,6 +106,9 @@ impl Repl {
             }
             KeyCode::Esc => {
                 self.popup.hide();
+                if matches!(self.popup_mode, PopupMode::SkillComplete) {
+                    self.mode = Mode::Insert;
+                }
             }
             KeyCode::Char('j') if matches!(self.popup_mode, PopupMode::SkillGroups) => {
                 self.popup.move_down();
